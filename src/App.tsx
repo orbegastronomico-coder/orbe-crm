@@ -12,7 +12,7 @@ import {
   UserCircle, Mail, Phone, MapPin, ChevronRight, PhoneCall,
   Filter, MoreHorizontal, LogOut, Briefcase, Clock, CheckSquare,
   Settings, Save, XCircle, History, ArrowLeft,
-  Mic, MicOff, Leaf, Eye, EyeOff
+  Mic, MicOff, Leaf, Eye, EyeOff, ShieldCheck
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -113,6 +113,7 @@ export default function App() {
   const [loginError, setLoginError] = useState<string | null>(null);
 
   const [view, setView] = useState<'pipeline' | 'new' | 'database' | 'control'>('pipeline');
+  const [dashboardTab, setDashboardTab] = useState<'overview' | 'activity'>('overview');
   const [currentUser, setCurrentUser] = useState<User>(() => {
     const saved = localStorage.getItem('orbe_user');
     return (saved && USERS.includes(saved as User)) ? (saved as User) : USERS[0];
@@ -214,6 +215,31 @@ export default function App() {
     }
   }, [selectedClientForHistory]);
 
+  const parseFlexibleDate = (dateStr: string | undefined | null) => {
+    if (!dateStr) return null;
+    const str = String(dateStr).trim();
+    
+    // Format DD/MM/YYYY
+    if (str.includes('/') && !str.includes('T') && !str.includes('-')) {
+      const parts = str.split('/');
+      if (parts.length === 3) {
+        const day = parseInt(parts[0]);
+        const month = parseInt(parts[1]) - 1;
+        const year = parts[2].length === 2 ? 2000 + parseInt(parts[2]) : parseInt(parts[2]);
+        const d = new Date(year, month, day);
+        return isNaN(d.getTime()) ? null : d;
+      }
+    }
+    
+    // Format ISO or YYYY-MM-DD
+    let normalized = str;
+    if (normalized.includes(' ') && !normalized.includes('T')) {
+      normalized = normalized.replace(' ', 'T');
+    }
+    const d = new Date(normalized);
+    return isNaN(d.getTime()) ? null : d;
+  };
+
   const fetchClients = async () => {
     setLoading(true);
     // Limpiar formulario al cambiar de vista si es necesario, 
@@ -254,12 +280,6 @@ export default function App() {
       if (pipelineData && pipelineData.length > 0) {
         const keys = Object.keys(pipelineData[0]);
         setPipelineColumns(keys);
-        console.log("ESQUEMA DETECTADO:", keys);
-        
-        if (!localStorage.getItem('debug_columns_shown')) {
-          console.log("Columnas en Pipeline:", keys.join(", "));
-          localStorage.setItem('debug_columns_shown', 'true');
-        }
       }
 
       // Permitir que la tabla pipeline no exista todavía sin romper la app, pero avisar
@@ -298,19 +318,15 @@ export default function App() {
         const dbPriority = p.priority || p.Priority || p.prioridad || 'Medium';
         const dbStatus = p.status || p.Status || p.estado || 'Pending';
 
-        // Función interna para validar si una cadena es una fecha ISO válida
-        const isValidDate = (str: any) => {
-          if (!str || typeof str !== 'string') return false;
-          const d = new Date(str);
-          return !isNaN(d.getTime());
-        };
+        // Identificar fechas con múltiples fallbacks y validación estricta usando parseFlexibleDate
+        const rawLastContact = p.last_contact_date || p['last contact date'] || p.last_contact || p.fecha_contacto || p.updated_at || p.created_at;
+        const parsedLastContact = parseFlexibleDate(rawLastContact);
+        const lastContact = parsedLastContact ? parsedLastContact.toISOString() : new Date().toISOString();
 
-        // Identificar fechas con múltiples fallbacks y validación estricta
-        let lastContact = p.last_contact_date || p['last contact date'] || p.last_contact || p.fecha_contacto || p.updated_at || p.created_at;
-        if (!isValidDate(lastContact)) lastContact = new Date().toISOString();
-
-        let actionDateVal = p['actions date'] || p['action date'] || p.action_date || p.fecha_accion || p.next_step;
-        if (!isValidDate(actionDateVal)) actionDateVal = calculateActionDate(dbPriority as Priority);
+        const rawActionDate = p['actions date'] || p['action date'] || p.action_date || p.fecha_accion || p.next_step;
+        const parsedActionDate = parseFlexibleDate(rawActionDate);
+        // NO calcular automáticamente si no viene en DB, mejor dejarlo como null o usar fallback si realmente es necesario
+        const actionDateVal = parsedActionDate ? parsedActionDate.toISOString() : calculateActionDate(dbPriority as Priority);
 
         const dbActionStatus = p.action_status || p['action status'] || p['Action Status'] || p['Action status'] || p.estado_accion || 'Pending';
 
@@ -361,10 +377,22 @@ export default function App() {
     return date.toISOString();
   };
 
+  const OrbeLogo = ({ className = "w-full h-full", invert = false }) => (
+    <div className={`${className} flex items-center justify-center`}>
+      <svg viewBox="0 0 100 100" className={`w-full h-full ${invert ? 'text-white' : 'text-orbe-green'}`} fill="currentColor">
+        {/* Laurel Wreath Left */}
+        <path d="M40 80c-5-2-10-6-13-11-3-5-5-10-5-16 0-3 1-5 2-8l1-3 2-4c2-4 5-7 8-10l3-3 2-1c2-1 4-1 6-1h2l-2 3c-1 2-2 4-3 7l-1 4v4l1 4 2 4c1 2 3 4 5 6l4 3 2 1c1 1 2 2 3 3l-4 1c-3 1-5 2-8 3l-4 1h-4l4-2c3-1 6-3 8-5l3-2h-5c-4 0-8 1-11 3l-3 2-2 2-2 3c-1 2-2 4-2 7s1 5 2 7c1 2 3 4 5 6l3 3 4 2 4 1-5 1c-5 0-10-1-14-3z" />
+        {/* Laurel Wreath Right */}
+        <path d="M60 80c5-2 10-6 13-11 3-5 5-10 5-16 0-3-1-5-2-8l-1-3-2-4c-2-4-5-7-8-10l-3-3-2-1c-2-1-4-1-6-1h-2l2 3c1 2 2 4 3 7l1 4v4l-1 4-2 4c-1 2-3 4-5 6l-4 3-2 1c-1 1-2 2-3 3l4 1c3 1 5 2 8 3l4 1h4l-4-2c-3-1-6-3-8-5l-3-2h5c4 0 8 1 11 3l3 2 2 2 2 3c1 2 2 4 2 7s-1 5-2 7c-1 2-3 4-5 6l-3 3-4 2-4 1 5 1c5 0 10-1 14-3z" />
+        {/* center circle */}
+        <circle cx="50" cy="50" r="1.5" />
+      </svg>
+    </div>
+  );
+
   const formatDateSafe = (dateStr: string | undefined | null, options: Intl.DateTimeFormatOptions = { day: '2-digit', month: 'short', year: '2-digit' }, fallback = '-') => {
-    if (!dateStr) return fallback;
-    const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return fallback;
+    const d = parseFlexibleDate(dateStr);
+    if (!d) return fallback;
     try {
       return d.toLocaleDateString('en-GB', options);
     } catch {
@@ -372,10 +400,9 @@ export default function App() {
     }
   };
 
-  const formatDateTimeSafe = (dateStr: string | undefined | null, options: Intl.DateTimeFormatOptions = { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }, fallback = '-') => {
-    if (!dateStr) return fallback;
-    const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return fallback;
+  const formatDateTimeSafe = (dateStr: string | undefined | null, options: Intl.DateTimeFormatOptions = { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }, fallback = 'No date') => {
+    const d = parseFlexibleDate(dateStr);
+    if (!d) return fallback;
     try {
       return d.toLocaleString('en-GB', options);
     } catch {
@@ -385,24 +412,22 @@ export default function App() {
 
   const toISODateOnly = (dateStr: string | undefined | null) => {
     if (!dateStr) return '';
-    const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return '';
+    const d = parseFlexibleDate(dateStr);
+    if (!d) return '';
     return d.toISOString().split('T')[0];
   };
 
   const isOverdue = (dateStr: string) => {
-    const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return false;
+    const d = parseFlexibleDate(dateStr);
+    if (!d) return false;
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const target = new Date(dateStr);
-    target.setHours(0, 0, 0, 0);
-    return target < today;
+    return d < today;
   };
 
   const getStatusBadge = (date: string) => {
-    const d = new Date(date);
-    if (isNaN(d.getTime())) return <span className="text-[10px] text-gray-300 italic">No date</span>;
+    const d = parseFlexibleDate(date);
+    if (!d) return <span className="text-[10px] text-gray-300 italic">No date</span>;
     
     const overdue = isOverdue(date);
     
@@ -458,17 +483,18 @@ export default function App() {
       // Convertir registros de pipeline a formato de historial
       const pipelineHistory: HistoryEntry[] = (pipeData || []).map(p => {
         const cId = p.client_id || p.id_cliente || p.cliente_id || p.ID_CLIENTE || clientId;
-        // Priorizar la fecha de la acción (field: action_date, actions date, fecha_accion) para el historial
-        // Buscamos de forma insensible a mayúsculas/minúsculas y espacios
-        const actionDateVal = p.action_date || p['actions date'] || p['Actions Date'] || p.fecha_accion || p.fecha_seguimiento;
-        const logicalDate = actionDateVal || p.created_at || p.updated_at || new Date().toISOString();
+        const rawActionDate = p.action_date || p['actions date'] || p['Actions Date'] || p.fecha_accion || p.fecha_seguimiento;
+        const logicalDateBase = rawActionDate || p.created_at || p.updated_at || new Date().toISOString();
+        
+        const parsed = parseFlexibleDate(logicalDateBase);
+        const logicalDate = parsed ? parsed.toISOString() : new Date().toISOString();
         
         return {
           id: `pipe-${p.id}`,
           client_id: cId,
           type: 'system',
           content: `Acción: [${p.status || 'Pending'}] ${p.last_action || 'Sin nota'}`,
-          created_at: logicalDate,
+          created_at: logicalDate, // Fecha formateada para el historial
           created_by: p.owner || 'Sistema'
         };
       });
@@ -928,18 +954,28 @@ export default function App() {
       );
     }
 
-    // 3. Colapsar por cliente: Solo el último registro en la tabla pipeline por cliente_id (orden cronológico real)
-    const clientMap = new Map<string | number, PipelineItem>();
+    // 3. Colapsar por cliente: Solo la acción PENDING (normalmente debería ser solo una)
+    // Si hay varias, priorizamos la más ANTIGUA (la más urgente)
+    const clientMap = new Map<string, PipelineItem>();
     
-    // Ordenamos por fecha de creación ascendente para que el registro más reciente (el último) sobreescriba en el Map
-    const sortedByTime = [...filtered].sort((a, b) => {
-      const timeA = a.created_at ? new Date(a.created_at).getTime() : 0;
-      const timeB = b.created_at ? new Date(b.created_at).getTime() : 0;
-      return timeA - timeB;
-    });
-    
-    sortedByTime.forEach(item => {
-      clientMap.set(item.client_id, item);
+    filtered.forEach(item => {
+      const clientId = String(item.client_id);
+      const currentActionDate = item.action_date;
+      
+      const parseDateVal = (d: string) => {
+        const parsed = parseFlexibleDate(d);
+        return parsed ? parsed.getTime() : 0;
+      };
+
+      if (!clientMap.has(clientId)) {
+        clientMap.set(clientId, item);
+      } else {
+        const existing = clientMap.get(clientId)!;
+        // Priorizar la más antigua (más urgente) si hay duplicados pendientes
+        if (parseDateVal(currentActionDate) < parseDateVal(existing.action_date)) {
+          clientMap.set(clientId, item);
+        }
+      }
     });
 
     // 4. Filtrar por Status semántico
@@ -955,8 +991,17 @@ export default function App() {
 
     // 5. Ordenar: 1º Action Date (Cercano primero), 2º Priority (High -> Postpone)
     const sortedResult = finalItems.sort((a, b) => {
-      const dateA = new Date(a.action_date).getTime() || 0;
-      const dateB = new Date(b.action_date).getTime() || 0;
+      const parseDate = (d: string) => {
+        if (!d) return 0;
+        if (d.includes('/') && !d.includes('T')) {
+          const parts = d.split('/');
+          return new Date(parseInt(parts[2].length === 2 ? '20' + parts[2] : parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0])).getTime();
+        }
+        return new Date(d.replace(' ', 'T')).getTime();
+      };
+
+      const dateA = parseDate(a.action_date);
+      const dateB = parseDate(b.action_date);
       
       if (dateA !== dateB) {
         return dateA - dateB; // Lo más cercano primero
@@ -1000,15 +1045,13 @@ export default function App() {
         >
           <div className="p-10">
             <div className="flex flex-col items-center mb-10">
-              <div className="w-24 h-24 bg-orbe-green rounded-full flex items-center justify-center shadow-lg mb-6 p-2 border-2 border-orbe-tan/20">
-                <Leaf className="w-12 h-12 text-orbe-tan transform rotate-[-45deg]" />
+              <div className="w-32 h-32 mb-6 relative flex items-center justify-center p-2">
+                <OrbeLogo />
               </div>
               <h1 className="text-2xl font-black text-orbe-green tracking-tighter text-center uppercase leading-tight">
-                Welcome to <br/> <span className="text-3xl">OrBe Serresiete</span>
+                Welcome to <br/> <span className="text-3xl font-serif">OrBe Serresiete</span>
               </h1>
-              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-[0.3em] mt-3 bg-gray-50 px-4 py-1 rounded-full">
-                Professional CRM Access
-              </p>
+              <div className="h-1 w-12 bg-orbe-tan mt-4 rounded-full"></div>
             </div>
 
             <form onSubmit={handleLogin} className="space-y-5">
@@ -1116,14 +1159,15 @@ export default function App() {
           <motion.div 
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
-            className="flex items-center gap-4 mb-10"
+            className="flex flex-col items-center mb-10 text-center"
           >
-            <div className="w-14 h-14 bg-white/10 rounded-full flex items-center justify-center p-2 border border-white/20">
-              <Leaf className="w-8 h-8 text-orbe-tan transform rotate-[-45deg]" />
+            <div className="w-20 h-20 mb-4 flex items-center justify-center p-1">
+              <OrbeLogo invert />
             </div>
-            <div className="flex flex-col">
-              <h1 className="text-white text-3xl font-black italic tracking-tighter leading-none">OrBe</h1>
-              <span className="text-[10px] text-white/40 uppercase font-bold tracking-[0.2em] mt-1">Gastronómico</span>
+            <div>
+              <h1 className="text-white text-2xl font-black tracking-tighter leading-none uppercase">OrBe</h1>
+              <div className="h-0.5 w-10 bg-orbe-tan mx-auto my-2"></div>
+              <span className="text-[9px] text-white/40 uppercase font-bold tracking-[0.4em]">Serresiete</span>
             </div>
           </motion.div>
 
@@ -1352,9 +1396,14 @@ export default function App() {
             animate={{ opacity: 1, x: 0 }}
             className="flex items-center justify-between w-full md:w-auto"
           >
-            <h2 className="text-sm md:text-lg font-black text-orbe-green tracking-tighter uppercase">OrBe Serresiete</h2>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 md:hidden">
+                <OrbeLogo />
+              </div>
+              <h2 className="text-base md:text-lg font-black text-orbe-green tracking-tighter uppercase leading-none mt-1">OrBe Serresiete</h2>
+            </div>
             {/* Indicador de vista actual en móvil */}
-            <div className="md:hidden px-3 py-1 bg-orbe-green/10 rounded-full">
+            <div className="md:hidden px-3 py-1 bg-orbe-green/5 border border-orbe-green/10 rounded-full">
               <span className="text-[10px] font-black text-orbe-green uppercase tracking-widest">{view}</span>
             </div>
           </motion.div>
@@ -1887,7 +1936,27 @@ export default function App() {
                 exit={{ opacity: 0, scale: 1.02 }}
                 className="space-y-6 flex-1 flex flex-col overflow-y-auto pr-2"
               >
-                {/* 1. SECCIÓN VISUAL - MÉTRICAS CRÍTICAS COMPACTAS */}
+                {/* SUB-NAVIGATION TABS */}
+                <div className="flex items-center gap-1 bg-orbe-tan/10 p-1 rounded-xl w-fit shrink-0">
+                  <button 
+                    onClick={() => setDashboardTab('overview')}
+                    className={`px-6 py-2.5 rounded-lg text-[10px] font-black uppercase tracking-[0.1em] transition-all flex items-center gap-2 ${dashboardTab === 'overview' ? 'bg-orbe-green text-white shadow-md' : 'text-orbe-green hover:bg-black/5'}`}
+                  >
+                    <LayoutDashboard size={14} />
+                    Resumen General
+                  </button>
+                  <button 
+                    onClick={() => setDashboardTab('activity')}
+                    className={`px-6 py-2.5 rounded-lg text-[10px] font-black uppercase tracking-[0.1em] transition-all flex items-center gap-2 ${dashboardTab === 'activity' ? 'bg-orbe-green text-white shadow-md' : 'text-orbe-green hover:bg-black/5'}`}
+                  >
+                    <ShieldCheck size={14} />
+                    Control de Actividad
+                  </button>
+                </div>
+
+                {dashboardTab === 'overview' && (
+                  <div className="space-y-8 animate-in fade-in duration-300">
+                    {/* 1. SECCIÓN VISUAL - MÉTRICAS CRÍTICAS COMPACTAS */}
                 <div className="grid grid-cols-3 gap-2">
                   {/* Total Overdue */}
                   <div className="bg-white p-2 md:p-3 rounded-lg border border-orbe-tan/30 shadow-sm flex flex-col items-center md:items-start justify-center gap-1">
@@ -1985,98 +2054,212 @@ export default function App() {
                     )}
                   </div>
                 </div>
+                </div>
+                )}
 
-                {/* 3. SECCIÓN DESKTOP: DETALLE POR RESPONSABLE (Hidden on Mobile) */}
-                <div className="hidden md:grid grid-cols-2 gap-6">
-                  {['Alejandro', 'Juanjo'].map((owner) => {
-                    const ownerActions = pipeline.filter(p => 
-                      p.owner === owner && 
-                      String(p.action_status || '').trim().toLowerCase() !== 'done'
-                    );
-                    const overdueActions = ownerActions.filter(p => isOverdue(p.action_date));
-                    
-                    return (
-                      <div key={owner} className="bg-white rounded-2xl shadow-sm border border-orbe-tan/50 overflow-hidden flex flex-col flex-1 min-h-[500px]">
-                        <div className="p-4 border-b border-orbe-tan/30 bg-gray-50/50 flex justify-between items-center">
-                          <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-full bg-orbe-green flex items-center justify-center text-white font-bold text-xs shadow-sm">
-                              {owner[0]}
+                {dashboardTab === 'activity' && (
+                  <div className="space-y-8 animate-in fade-in duration-300">
+                    {/* CONTROL DE ACTIVIDAD */}
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-2 px-1">
+                        <ShieldCheck size={20} className="text-orbe-green" />
+                        <h4 className="text-lg font-black text-orbe-green uppercase tracking-tight">Actividad de Seguimiento (Acciones por Vendedor)</h4>
+                      </div>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        {['Juanjo', 'Alejandro'].map((owner) => {
+                          const now = new Date();
+                          const getCount = (days: number) => {
+                            const limit = new Date();
+                            limit.setDate(now.getDate() - days);
+                            return pipeline.filter(p => 
+                              p.owner === owner && 
+                              parseFlexibleDate(p.last_contact_date) && 
+                              parseFlexibleDate(p.last_contact_date)! >= limit
+                            ).length;
+                          };
+
+                          return (
+                            <div key={`activity-tab-${owner}`} className="bg-white rounded-2xl p-6 border border-orbe-tan/50 shadow-sm flex flex-col gap-6 transition-all hover:shadow-md">
+                              <div className="flex items-center gap-4">
+                                <div className="w-12 h-12 rounded-2xl bg-orbe-green/10 flex items-center justify-center text-orbe-green font-black text-xl">
+                                  {owner[0]}
+                                </div>
+                                <div>
+                                  <h5 className="font-black text-orbe-green text-lg leading-none">{owner}</h5>
+                                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Recuento de Acciones</p>
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-3 gap-4">
+                                {[
+                                  { label: '7 días', val: getCount(7), color: 'bg-green-50 text-green-600 border-green-100' },
+                                  { label: '14 días', val: getCount(14), color: 'bg-orange-50 text-orange-600 border-orange-100' },
+                                  { label: '30 días', val: getCount(30), color: 'bg-orbe-green text-white border-orbe-green' },
+                                ].map(card => (
+                                  <div key={card.label} className={`${card.color} p-4 rounded-xl border flex flex-col items-center justify-center transition-transform hover:scale-105 cursor-default`}>
+                                    <span className="text-2xl font-black">{card.val}</span>
+                                    <span className="text-[8px] font-bold uppercase tracking-widest mt-1 opacity-80">{card.label}</span>
+                                  </div>
+                                ))}
+                              </div>
                             </div>
-                            <h4 className="text-sm font-black text-orbe-green uppercase tracking-tight">{owner}</h4>
-                          </div>
-                          <div className="flex gap-2">
-                             <div className="px-3 py-0.5 bg-white border border-orbe-tan/40 rounded-full text-[9px] font-bold text-gray-500">
-                               Total: {ownerActions.length}
-                             </div>
-                             {overdueActions.length > 0 && (
-                               <div className="px-3 py-0.5 bg-red-50 text-red-600 border border-red-100 rounded-full text-[9px] font-bold flex items-center gap-1">
-                                 <AlertCircle size={9} /> {overdueActions.length} Overdue
-                               </div>
-                             )}
-                          </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="bg-white rounded-2xl border border-orbe-tan/50 shadow-sm overflow-hidden">
+                      <div className="p-5 border-b border-orbe-tan/30 bg-gray-50/50 flex justify-between items-center">
+                        <div className="flex items-center gap-2">
+                          <Clock size={18} className="text-orbe-tan" />
+                          <h4 className="text-sm font-black text-orbe-green uppercase tracking-tight">Timeline de Últimos Contactos (Antigüedad)</h4>
                         </div>
-                        
-                        <div className="flex-1 overflow-auto bg-white">
-                          <table className="w-full text-left border-collapse">
-                            <thead className="bg-[#fcfaf7] sticky top-0 border-b border-orbe-tan/30 z-10">
-                              <tr>
-                                <th className="p-3 text-[9px] font-bold text-gray-400 uppercase tracking-widest">Company</th>
-                                <th className="p-3 text-[9px] font-bold text-gray-400 uppercase tracking-widest">Due Date</th>
-                                <th className="p-3 text-[9px] font-bold text-gray-400 uppercase tracking-widest text-right">Status</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-orbe-tan/10">
-                              {ownerActions.length === 0 ? (
-                                <tr>
-                                  <td colSpan={3} className="p-10 text-center text-[11px] text-gray-400 italic">No active follow-ups</td>
-                                </tr>
-                              ) : (
-                                ownerActions
-                                  .sort((a, b) => new Date(a.action_date).getTime() - new Date(b.action_date).getTime())
-                                  .map(item => (
-                                  <tr key={item.id} className="hover:bg-orbe-cream/20 transition-colors">
-                                    <td className="px-3 py-2">
-                                      <div className="font-bold text-orbe-green text-[11px] truncate max-w-[150px]">{item.company}</div>
-                                      <div className="text-[9px] text-gray-400 truncate max-w-[150px]">{item.last_action || 'No notes'}</div>
+                        <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Lo más antiguo se muestra primero</span>
+                      </div>
+                      
+                      <div className="max-h-[500px] overflow-auto">
+                        <table className="w-full text-left">
+                          <thead className="bg-[#fcfaf7] sticky top-0 border-b border-orbe-tan/30 z-10">
+                            <tr>
+                              <th className="p-4 text-[9px] font-bold text-gray-400 uppercase tracking-widest">Empresa</th>
+                              <th className="p-4 text-[9px] font-bold text-gray-400 uppercase tracking-widest">Vendedor</th>
+                              <th className="p-4 text-[9px] font-bold text-gray-400 uppercase tracking-widest">Último Contacto</th>
+                              <th className="p-4 text-[9px] font-bold text-gray-400 uppercase tracking-widest text-right">Tiempo transcurrido</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-orbe-tan/10 text-xs">
+                            {pipeline
+                              .filter(p => p.last_contact_date)
+                              .sort((a, b) => {
+                                const dA = parseFlexibleDate(a.last_contact_date)?.getTime() || 0;
+                                const dB = parseFlexibleDate(b.last_contact_date)?.getTime() || 0;
+                                return dA - dB; // Antiguo a nuevo
+                              })
+                              .map(item => {
+                                const d = parseFlexibleDate(item.last_contact_date);
+                                const daysGone = d ? Math.floor((new Date().getTime() - d.getTime()) / (1000 * 3600 * 24)) : '?';
+                                
+                                return (
+                                  <tr key={`timeline-full-${item.id}`} className="hover:bg-orbe-cream/20 transition-colors">
+                                    <td className="p-4">
+                                      <div className="font-bold text-orbe-green">{item.company}</div>
+                                      <div className="text-[9px] text-gray-400 truncate max-w-[200px]">{item.last_action}</div>
                                     </td>
-                                    <td className="px-3 py-2 font-mono text-[10px] text-gray-500">
-                                      {formatDateSafe(item.action_date)}
+                                    <td className="p-4">
+                                      <span className="px-2 py-0.5 bg-gray-100 rounded text-[9px] font-bold text-gray-500 uppercase">{item.owner}</span>
                                     </td>
-                                    <td className="px-3 py-2 text-right">
-                                      <span className={`text-[8px] font-black px-1.5 py-0.5 rounded border uppercase tracking-widest ${isOverdue(item.action_date) ? 'bg-red-50 text-red-600 border-red-100' : 'bg-green-50 text-green-600 border-green-100'}`}>
-                                        {isOverdue(item.action_date) ? 'Overdue' : 'On Time'}
+                                    <td className="p-4 font-mono text-gray-500">
+                                      {formatDateSafe(item.last_contact_date)}
+                                    </td>
+                                    <td className="p-4 text-right">
+                                      <span className={`font-black text-[10px] flex justify-end items-center gap-1.5 ${Number(daysGone) > 30 ? 'text-red-500' : Number(daysGone) > 14 ? 'text-orange-500' : 'text-green-500'}`}>
+                                        {Number(daysGone) > 30 && <AlertCircle size={12} />}
+                                        hace {daysGone} días
                                       </span>
                                     </td>
                                   </tr>
-                                ))
-                              )}
-                            </tbody>
-                          </table>
-                        </div>
-                        
-                        <div className="p-3 bg-gray-50 border-t border-orbe-tan/20">
-                          {ownerActions.length > 0 && overdueActions.length === 0 ? (
-                            <div className="flex items-center gap-2 text-green-600 text-[9px] font-bold">
-                              <CheckCircle size={12} /> All up to date! Great job.
-                            </div>
-                          ) : ownerActions.length > 0 ? (
-                             <div className="flex items-center gap-2 text-red-500 text-[10px] font-bold">
-                              <AlertCircle size={14} /> Has urgent actions to resolve.
-                            </div>
-                          ) : (
-                            <div className="flex items-center gap-2 text-gray-400 text-[10px] font-bold">
-                              <Clock size={14} /> No recent activity.
-                            </div>
-                          )}
-                        </div>
+                                );
+                              })}
+                          </tbody>
+                        </table>
                       </div>
-                    );
-                  })}
-                </div>
+                    </div>
+                  </div>
+                )}
+
+                {dashboardTab === 'overview' && (
+                  <div className="hidden md:grid grid-cols-2 gap-6">
+                    {['Alejandro', 'Juanjo'].map((owner) => {
+                      const ownerActions = pipeline.filter(p => 
+                        p.owner === owner && 
+                        String(p.action_status || '').trim().toLowerCase() !== 'done'
+                      );
+                      const overdueActions = ownerActions.filter(p => isOverdue(p.action_date));
+                      
+                      return (
+                        <div key={`overview-tasks-${owner}`} className="bg-white rounded-2xl shadow-sm border border-orbe-tan/50 overflow-hidden flex flex-col flex-1 min-h-[500px]">
+                          <div className="p-4 border-b border-orbe-tan/30 bg-gray-50/50 flex justify-between items-center">
+                            <div className="flex items-center gap-3">
+                              <div className="w-8 h-8 rounded-full bg-orbe-green flex items-center justify-center text-white font-bold text-xs shadow-sm">
+                                {owner[0]}
+                              </div>
+                              <h4 className="text-sm font-black text-orbe-green uppercase tracking-tight">{owner}</h4>
+                            </div>
+                            <div className="flex gap-2">
+                               <div className="px-3 py-0.5 bg-white border border-orbe-tan/40 rounded-full text-[9px] font-bold text-gray-500">
+                                 Total: {ownerActions.length}
+                               </div>
+                               {overdueActions.length > 0 && (
+                                 <div className="px-3 py-0.5 bg-red-50 text-red-600 border border-red-100 rounded-full text-[9px] font-bold flex items-center gap-1">
+                                   <AlertCircle size={9} /> {overdueActions.length} Overdue
+                                 </div>
+                               )}
+                            </div>
+                          </div>
+                          
+                          <div className="flex-1 overflow-auto bg-white">
+                            <table className="w-full text-left border-collapse">
+                              <thead className="bg-[#fcfaf7] sticky top-0 border-b border-orbe-tan/30 z-10">
+                                <tr>
+                                  <th className="p-3 text-[9px] font-bold text-gray-400 uppercase tracking-widest">Company</th>
+                                  <th className="p-3 text-[9px] font-bold text-gray-400 uppercase tracking-widest">Due Date</th>
+                                  <th className="p-3 text-[9px] font-bold text-gray-400 uppercase tracking-widest text-right">Status</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-orbe-tan/10 text-[11px]">
+                                {ownerActions.length === 0 ? (
+                                  <tr>
+                                    <td colSpan={3} className="p-10 text-center text-[11px] text-gray-400 italic">No active follow-ups</td>
+                                  </tr>
+                                ) : (
+                                  ownerActions
+                                    .sort((a, b) => new Date(a.action_date).getTime() - new Date(b.action_date).getTime())
+                                    .map(item => (
+                                    <tr key={item.id} className="hover:bg-orbe-cream/20 transition-colors">
+                                      <td className="px-3 py-2">
+                                        <div className="font-bold text-orbe-green truncate max-w-[150px]">{item.company}</div>
+                                        <div className="text-[9px] text-gray-400 truncate max-w-[150px] italic">{item.last_action || 'No notes'}</div>
+                                      </td>
+                                      <td className="px-3 py-2 font-mono text-[10px] text-gray-500">
+                                        {formatDateSafe(item.action_date)}
+                                      </td>
+                                      <td className="px-3 py-2 text-right">
+                                        <span className={`text-[8px] font-black px-1.5 py-0.5 rounded border uppercase tracking-widest ${isOverdue(item.action_date) ? 'bg-red-50 text-red-600 border-red-100' : 'bg-green-50 text-green-600 border-green-100'}`}>
+                                          {isOverdue(item.action_date) ? 'Overdue' : 'On Time'}
+                                        </span>
+                                      </td>
+                                    </tr>
+                                  ))
+                                )}
+                              </tbody>
+                            </table>
+                          </div>
+                          
+                          <div className="p-3 bg-gray-50 border-t border-orbe-tan/20">
+                            {ownerActions.length > 0 && overdueActions.length === 0 ? (
+                              <div className="flex items-center gap-2 text-green-600 text-[9px] font-bold">
+                                <CheckCircle size={12} /> All up to date! Great job.
+                              </div>
+                            ) : ownerActions.length > 0 ? (
+                               <div className="flex items-center gap-2 text-red-500 text-[10px] font-bold">
+                                <AlertCircle size={14} /> Has urgent actions to resolve.
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-2 text-gray-400 text-[10px] font-bold">
+                                <Clock size={14} /> No recent activity.
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </motion.div>
             )}
 
-            {view === 'database' && (
+          {view === 'database' && (
               <motion.div 
                 key="database-view"
                 initial={{ opacity: 0 }}
@@ -2125,7 +2308,7 @@ export default function App() {
                         <th className="p-5 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Phone</th>
                         <th className="p-5 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Status</th>
                         <th className="p-5 text-[10px] font-bold text-gray-400 uppercase tracking-widest text-center">Owner (Follow-up)</th>
-                        <th className="p-5 text-[10px] font-bold text-gray-400 uppercase tracking-widest text-center">Actions</th>
+                        <th className="p-5 text-[10px] font-bold text-gray-400 uppercase tracking-widest text-center">ACTIONS</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-orbe-tan/20 text-sm whitespace-nowrap">
@@ -2190,13 +2373,53 @@ export default function App() {
                                 )}
                               </td>
                               <td className="p-5 text-center">
-                                <button 
-                                  onClick={() => setEditingClient(c)}
-                                  className="p-2 bg-orbe-green/10 text-orbe-green rounded-lg hover:bg-orbe-green hover:text-white transition-all shadow-sm"
-                                  title="Edit Client"
-                                >
-                                  <Settings size={14} />
-                                </button>
+                                <div className="flex items-center justify-center gap-2">
+                                  <button 
+                                    onClick={() => {
+                                      const email = c.email;
+                                      if (!email) {
+                                        alert("Client has no email registered.");
+                                        return;
+                                      }
+                                      
+                                      // Deep link para Zoho Mail App
+                                      const zohoUrl = `zohomail:compose?to=${email}`;
+                                      const mailtoUrl = `mailto:${email}`;
+                                      
+                                      const start = Date.now();
+                                      window.location.href = zohoUrl;
+                                      
+                                      // Fallback mejorado
+                                      setTimeout(() => {
+                                        if (Date.now() - start < 500) {
+                                          if (confirm("Zoho Mail app not detected. Would you like to use your default email app instead?")) {
+                                            window.location.href = mailtoUrl;
+                                          } else {
+                                            alert("Recommended: For a better experience, please install the Zoho Mail app from the App Store or Google Play.");
+                                          }
+                                        }
+                                      }, 400);
+                                    }}
+                                    className="p-2 bg-orbe-tan/10 text-orbe-green rounded-lg hover:bg-black/5 transition-all shadow-sm flex items-center justify-center cursor-pointer"
+                                    title="Enviar Email (Zoho)"
+                                  >
+                                    <Mail size={14} />
+                                  </button>
+                                  <a 
+                                    href={`tel:${c.mobile || c.phone || ''}`}
+                                    className="p-2 bg-orbe-tan/10 text-orbe-green rounded-lg hover:bg-black/5 transition-all shadow-sm flex items-center justify-center"
+                                    title="Llamar"
+                                  >
+                                    <PhoneCall size={14} />
+                                  </a>
+                                  <button 
+                                    onClick={() => setEditingClient(c)}
+                                    className="p-2 bg-orbe-green text-white rounded-lg hover:bg-black/90 transition-all shadow-sm flex items-center justify-center cursor-pointer"
+                                    title="Editar Cliente"
+                                  >
+                                    <Settings size={14} />
+                                  </button>
+                                </div>
                               </td>
                             </tr>
                           );
@@ -2646,10 +2869,10 @@ export default function App() {
                             item.type === 'note' ? 'bg-orbe-green' : 'bg-gray-400'
                           }`}></div>
                           <div className="flex justify-between items-start mb-1">
-                            <span className="text-[10px] font-black text-orbe-green/40 uppercase tracking-widest">
+                            <span className="text-[10px] font-black text-orbe-green/60 uppercase tracking-widest bg-orbe-tan/5 px-2 py-0.5 rounded border border-orbe-tan/10">
                               {formatDateTimeSafe(item.created_at)}
                             </span>
-                            <span className="text-[10px] font-bold text-gray-400 bg-gray-100 px-2 py-0.5 rounded italic">
+                            <span className="text-[10px] font-bold text-gray-400 italic">
                               By {item.created_by}
                             </span>
                           </div>
