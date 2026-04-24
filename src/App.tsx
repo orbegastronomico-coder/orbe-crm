@@ -4,7 +4,6 @@
  */
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { createClient } from '@supabase/supabase-js';
 import { GoogleGenAI, Type } from "@google/genai";
 import { 
   Users, LayoutDashboard, Database, PlusCircle, Plus,
@@ -17,19 +16,92 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 
 import { supabase, supabaseUrl, supabaseAnonKey } from './lib/supabase';
-import { calculatePriority } from './lib/priority';
-import { 
-  USERS, User, PRIORITIES, Priority, PIPELINE_STATUSES, PipelineStatus,
-  Client, PipelineItem, HistoryEntry 
-} from './types';
 
-// Import components
-import { TaskModal } from './components/TaskModal';
-import { PostponeModal } from './components/PostponeModal';
-import { Pipeline } from './components/Pipeline';
-import { Dashboards } from './components/Dashboards';
+const config = { 
+  url: supabaseUrl, 
+  key: supabaseAnonKey, 
+  isValid: supabaseUrl.startsWith('http') && !supabaseUrl.includes('placeholder')
+};
 
-const config = { url: supabaseUrl, key: supabaseAnonKey, isValid: true };
+const USERS = ['All', 'Juanjo', 'Alejandro'] as const;
+type User = typeof USERS[number];
+
+const PRIORITIES = {
+  'Urgent': 1,
+  'High': 2,
+  'Medium': 7,
+  'Low': 15,
+  'Contact in 1 month': 30,
+  'Postpone': 60
+} as const;
+
+const PREDEFINED_ACTIONS = [
+  'Send email',
+  'Send email with catalogue',
+  'Call',
+  'Visit',
+  'Meeting',
+  'Drop samples'
+] as const;
+
+const PIPELINE_STATUSES = [
+  'Not interested',
+  '1st contact',
+  'Baking off',
+  'Grajales',
+  'Client'
+] as const;
+
+type PipelineStatus = typeof PIPELINE_STATUSES[number];
+type Priority = keyof typeof PRIORITIES;
+type PredefinedAction = typeof PREDEFINED_ACTIONS[number];
+
+interface Client {
+  id: string | number;
+  company: string;
+  contact_person: string;
+  lead_name: string;
+  email: string;
+  phone: string;
+  mobile: string;
+  address: string;
+  website?: string;
+  status_possible?: string;
+  sector?: string;
+  location?: string;
+  city?: string;
+  postal_code?: string;
+  description?: string;
+  client_status?: 'Potential client' | 'Client' | 'Temporary Discarded';
+  created_at?: string;
+}
+
+interface PipelineItem {
+  id: string | number;
+  client_id: string | number;
+  company?: string; // Joined field
+  client_status?: string; // Joined field from clients table
+  owner: User;
+  status: PipelineStatus;
+  last_contact_date: string;
+  samples: string;
+  last_action: string;
+  notes?: string;
+  priority: Priority;
+  action_date: string;
+  action_status: 'Pending' | 'Done' | string;
+  created_at?: string;
+}
+
+interface HistoryEntry {
+  id: string | number;
+  client_id: string | number;
+  type: 'status_change' | 'note' | 'system' | 'priority_change';
+  content: string;
+  notes?: string;
+  created_at: string;
+  created_by: string;
+}
 
 const MOCK_CLIENTS: Client[] = [
   { id: 1, company: 'Tech Solutions SL', contact_person: 'Ana García', lead_name: 'Lead Orbe A', email: 'ana@tech.com', phone: '600111222', mobile: '699000111', address: 'Calle Falsa 123', client_status: 'Potential client' },
@@ -110,6 +182,7 @@ export default function App() {
   const [postponeItem, setPostponeItem] = useState<PipelineItem | null>(null);
   const [postponeDate, setPostponeDate] = useState('');
   const [postponeReason, setPostponeReason] = useState('');
+  const [accomplishDate, setAccomplishDate] = useState('');
   const [isConfirmingPostpone, setIsConfirmingPostpone] = useState(false);
   const [pipelineColumns, setPipelineColumns] = useState<string[]>([]);
 
@@ -759,6 +832,7 @@ export default function App() {
       
       addHistoryEntry(prevItem.client_id, 'note', `Tarea Completada. Siguiente paso: ${nextAction} (Prioridad Auto: ${nextPriority})`, comments);
       setTaskToAccomplish(null);
+      setAccomplishDate('');
       fetchClients();
     } catch (err: any) {
       console.error("Error al completar tarea:", err);
@@ -986,7 +1060,8 @@ export default function App() {
 
     // Filtro crítico: Solo acciones PENDING o POSTPONE
     filtered = filtered.filter(p => {
-      const status = String(p['action status'] || p.action_status || p.status || '').toLowerCase().trim();
+      const status = String(p['action status'] || p.action_status || '').toLowerCase().trim();
+      // Si no tiene status, asumimos Pending (retrocompatibilidad)
       return status === 'pending' || status === 'postpone' || status === '';
     });
 
@@ -1000,6 +1075,7 @@ export default function App() {
       );
     }
 
+    // 2. Filtrar por término de búsqueda
     if (searchTerm) {
       const search = searchTerm.toLowerCase();
       filtered = filtered.filter(p => 
@@ -1007,12 +1083,13 @@ export default function App() {
       );
     }
 
-    // Collapse per client
+    // 3. Colapsar por cliente: Solo la acción PENDING (normalmente debería ser solo una)
+    // Si hay varias, priorizamos la más ANTIGUA (la más urgente)
     const clientMap = new Map<string, PipelineItem>();
     
     filtered.forEach(item => {
-      const clientId = String(item.client_id || item.clientid || '');
-      const currentActionDate = item.action_date || item.actiondate || '';
+      const clientId = String(item.client_id);
+      const currentActionDate = item.action_date;
       
       const parseDateVal = (d: string) => {
         const parsed = parseFlexibleDate(d);
@@ -1023,22 +1100,27 @@ export default function App() {
         clientMap.set(clientId, item);
       } else {
         const existing = clientMap.get(clientId)!;
+        // Priorizar la más antigua (más urgente) si hay duplicados pendientes
         if (parseDateVal(currentActionDate) < parseDateVal(existing.action_date)) {
           clientMap.set(clientId, item);
         }
       }
     });
 
+    // 4. Filtrar por Status semántico del cliente (columna client_status en tabla clients)
     let finalItems = Array.from(clientMap.values());
     if (statusFilter !== 'All') {
       finalItems = finalItems.filter(item => {
         const cStatus = String(item.client_status || 'Potential client').toLowerCase().trim();
         const fStatus = String(statusFilter).toLowerCase().trim();
+        
+        // Match specific mappings if needed (e.g. handled by the select values now)
         return cStatus === fStatus;
       });
     }
 
-    return finalItems.sort((a, b) => {
+    // 5. Ordenar: 1º Prioridad (Urgent -> Low), 2º Action Date (Cercano primero)
+    const sortedResult = finalItems.sort((a, b) => {
       const priorityWeightA = PRIORITIES[a.priority as Priority] || 999;
       const priorityWeightB = PRIORITIES[b.priority as Priority] || 999;
       
@@ -1046,10 +1128,21 @@ export default function App() {
         return priorityWeightA - priorityWeightB;
       }
 
-      const dateA = parseFlexibleDate(a.action_date)?.getTime() || 0;
-      const dateB = parseFlexibleDate(b.action_date)?.getTime() || 0;
+      const parseDate = (d: string) => {
+        if (!d) return 0;
+        if (d.includes('/') && !d.includes('T')) {
+          const parts = d.split('/');
+          return new Date(parseInt(parts[2].length === 2 ? '20' + parts[2] : parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0])).getTime();
+        }
+        return new Date(d.replace(' ', 'T')).getTime();
+      };
+
+      const dateA = parseDate(a.action_date);
+      const dateB = parseDate(b.action_date);
       return dateA - dateB;
     });
+
+    return sortedResult;
   }, [pipeline, currentUser, searchTerm, statusFilter]);
 
   const filteredClients = useMemo(() => {
@@ -1721,29 +1814,689 @@ export default function App() {
             )}
 
             {view === 'pipeline' && (
-              <Pipeline 
-                items={userPipeline}
-                searchTerm={searchTerm}
-                setSearchTerm={setSearchTerm}
-                onAccomplish={setTaskToAccomplish}
-                onPostpone={setPostponeItem}
-                onHistory={(id) => {
-                    const client = clients.find(c => String(c.id) === String(id));
-                    if (client) setSelectedClientForHistory(client);
-                }}
-                onUpdate={handleUpdatePipeline}
-                formatDateSafe={formatDateSafe}
-                getStatusBadge={getStatusBadge}
-              />
+              <motion.div 
+                key="pipeline-view"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="bg-white rounded-2xl shadow-sm border border-orbe-tan/50 overflow-hidden flex-1 flex flex-col min-h-0"
+              >
+                <div className="p-4 border-b border-orbe-tan/30 bg-gray-50/50 flex flex-col md:flex-row justify-between items-stretch md:items-center gap-4 sticky top-0 md:relative z-20">
+                  <div className="max-w-md flex-1 relative">
+                    <Search className="absolute left-4 top-2.5 text-orbe-tan" size={16} />
+                    <input 
+                      className="w-full pl-10 pr-4 py-3 md:py-2 bg-white border border-orbe-tan/50 rounded-lg outline-none focus:ring-2 ring-orbe-green/10 transition-all font-semibold text-orbe-green text-sm shadow-sm"
+                      placeholder="Filter by follow-up company..."
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                    />
+                  </div>
+                  <div className="flex gap-2">
+                    <div className="flex-1 flex items-center gap-3 bg-orbe-green border border-orbe-green px-4 py-2 rounded-xl shadow-lg shadow-orbe-green/20 transition-all">
+                      <Users size={14} className="text-white opacity-70" />
+                      <span className="text-[9px] font-black text-white/60 uppercase tracking-widest border-r border-white/20 pr-3 hidden md:inline">Owner:</span>
+                      <select 
+                        value={currentUser} 
+                        onChange={(e) => setCurrentUser(e.target.value as User)}
+                        className="flex-1 md:flex-none text-[10px] font-black text-white uppercase tracking-wider outline-none bg-transparent cursor-pointer"
+                      >
+                        {USERS.map(u => (
+                          <option key={u} value={u} className="bg-orbe-green text-white">{u.toUpperCase()}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="flex-1 flex items-center gap-3 bg-orbe-green border border-orbe-green px-4 py-2 rounded-xl shadow-lg shadow-orbe-green/20 transition-all">
+                      <Filter size={14} className="text-white opacity-70" />
+                      <span className="text-[9px] font-black text-white/60 uppercase tracking-widest border-r border-white/20 pr-3 hidden md:inline">Status:</span>
+                      <select 
+                        value={statusFilter} 
+                        onChange={(e) => setStatusFilter(e.target.value as any)}
+                        className="flex-1 md:flex-none text-[10px] font-black text-white uppercase tracking-wider outline-none bg-transparent cursor-pointer"
+                      >
+                        <option value="All" className="bg-orbe-green text-white">ALL STATUS</option>
+                        <option value="Potential client" className="bg-orbe-green text-white">POTENTIAL</option>
+                        <option value="Client" className="bg-orbe-green text-white">CLIENT</option>
+                        <option value="Not interested" className="bg-orbe-green text-white">DISCARDED</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="overflow-auto flex-1 scrollbar-thin scrollbar-thumb-orbe-tan/20 scrollbar-track-transparent p-4 md:p-0">
+                  {/* VISTA DESKTOP: TABLA */}
+                  <table className="w-full text-left border-collapse hidden md:table">
+                    <thead className="bg-[#fcfaf7] border-b border-orbe-tan/30 sticky top-0 z-10 whitespace-nowrap">
+                      <tr>
+                        <th className="p-2 text-[10px] font-bold text-gray-400 uppercase tracking-widest w-16">ID</th>
+                        <th className="p-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Company</th>
+                        <th className="p-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Owner</th>
+                        <th className="p-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Action Date</th>
+                        <th className="p-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Priority</th>
+                        <th className="p-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Last Contact</th>
+                        <th className="p-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Last Action</th>
+                        <th className="p-2 text-[10px] font-bold text-gray-400 uppercase tracking-widest text-center w-28">Action Status</th>
+                        <th className="p-2 text-[10px] font-bold text-gray-400 uppercase tracking-widest text-center w-28">Status</th>
+                        <th className="p-2 text-[10px] font-bold text-gray-400 uppercase tracking-widest text-center w-20">Log</th>
+                        <th className="p-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest text-center">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-orbe-tan/20 text-sm whitespace-nowrap">
+                      {userPipeline.length === 0 ? (
+                        <tr key="empty-clients-row">
+                          <td colSpan={11} className="p-20 text-center text-gray-400 font-medium italic">
+                            No active follow-ups matching the criteria.
+                          </td>
+                        </tr>
+                      ) : (
+                        userPipeline.map(item => (
+                          <tr key={item.id} className="hover:bg-orbe-cream/30 transition-colors">
+                            <td className="p-2 font-mono text-[10px] text-gray-400">#{item.client_id}</td>
+                            <td className="px-3 py-2">
+                              <div className="font-bold text-orbe-green">{item.company}</div>
+                            </td>
+                            <td className="px-3 py-2">
+                              <div className="flex items-center gap-2">
+                                <UserCircle size={14} className="text-orbe-tan" />
+                                <span className="font-semibold text-gray-600">{item.owner}</span>
+                              </div>
+                            </td>
+                            <td className="px-3 py-2">
+                              <div className="flex flex-col gap-1">
+                                <span className="font-mono font-bold text-orbe-green/70 text-[11px]">
+                                  {formatDateSafe(item.action_date).toUpperCase()}
+                                </span>
+                                {getStatusBadge(item.action_date)}
+                              </div>
+                            </td>
+                            <td className="px-3 py-2">
+                              <span 
+                                className={`font-black text-[10px] uppercase tracking-widest ${
+                                  item.priority === 'Urgent' ? 'text-red-700 bg-red-50 border border-red-100 px-2 py-0.5 rounded' :
+                                  item.priority === 'High' ? 'text-red-500' : 
+                                  item.priority === 'Medium' ? 'text-orange-500' : 
+                                  'text-blue-500'
+                                }`}
+                              >
+                                {item.priority}
+                              </span>
+                            </td>
+                            <td className="p-5">
+                              <input 
+                                type="date"
+                                defaultValue={toISODateOnly(item.last_contact_date)}
+                                onChange={(e) => {
+                                  if (e.target.value) {
+                                    handleUpdatePipeline(item.id, { last_contact_date: new Date(e.target.value).toISOString() });
+                                  }
+                                }}
+                                className="bg-transparent font-mono text-xs text-gray-500 outline-none border border-transparent focus:border-orbe-tan/30 rounded px-1"
+                              />
+                            </td>
+                            <td className="p-5 text-gray-500 italic min-w-[250px]">
+                              <input 
+                                defaultValue={item.last_action}
+                                onBlur={(e) => handleUpdatePipeline(item.id, { last_action: e.target.value })}
+                                className="bg-transparent w-full outline-none text-xs"
+                                placeholder="Action note..."
+                              />
+                            </td>
+                             <td className="p-3 text-center">
+                               <span className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest ${
+                                 String(item.action_status).toLowerCase() === 'postpone' 
+                                   ? 'bg-amber-100 text-amber-700 border border-amber-200' 
+                                   : 'bg-blue-50 text-blue-700 border border-blue-100'
+                               }`}>
+                                 {String(item.action_status).toLowerCase() === 'postpone' ? 'Postponed' : (item.action_status || 'Pending')}
+                               </span>
+                             </td>
+                              <td className="p-3 text-center">
+                                <span 
+                                  className={`px-2 py-1 rounded-full font-bold text-[9px] border shadow-sm transition-all inline-block uppercase tracking-wider ${
+                                    item.status === 'Client' ? 'bg-green-50 text-green-700 border-green-100' : 
+                                    (item.status === 'Not interested' || item.status === 'Temporary Discarded' || item.status === 'Fail') ? 'bg-red-50 text-red-700 border-red-100' :
+                                    'bg-gray-100 text-orbe-green border-gray-200'
+                                  }`}
+                                >
+                                  {item.status === 'Not interested' ? 'Discarded' : (item.status || '1st contact')}
+                                </span>
+                              </td>
+                            <td className="p-3 text-center">
+                              <button 
+                                onClick={() => setSelectedClientForHistory(clients.find(c => String(c.id) === String(item.client_id)) || null)}
+                                className="p-2 bg-orbe-tan/10 text-orbe-green rounded-lg hover:bg-orbe-tan/30 transition-all shadow-sm"
+                                title="Interaction Log"
+                              >
+                                <Clock size={14} />
+                              </button>
+                            </td>
+                            <td className="p-5 text-center">
+                              <div className="flex items-center justify-center gap-2">
+                                <button 
+                                  onClick={() => setTaskToAccomplish(item)}
+                                  className="p-2 bg-orbe-green/10 text-orbe-green rounded-lg hover:bg-orbe-green hover:text-white transition-all shadow-sm flex items-center gap-1 group"
+                                  title="Task Accomplished"
+                                >
+                                  <CheckCircle size={14} className="group-hover:scale-110" />
+                                  <span className="text-[9px] font-black uppercase">Close</span>
+                                </button>
+                                <button 
+                                  onClick={() => setPostponeItem(item)}
+                                  className="p-2 bg-orbe-tan/10 text-orbe-green rounded-lg hover:bg-orbe-green hover:text-white transition-all shadow-sm flex items-center gap-1 group"
+                                  title="Postpone Action"
+                                >
+                                  <Calendar size={14} className="group-hover:scale-110" />
+                                  <span className="text-[9px] font-black uppercase">Postpone</span>
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+
+                  {/* VISTA MÓVIL: CARDS (Pipeline) */}
+                  <div className="md:hidden space-y-4 mobile-cards-container">
+                    {userPipeline.length === 0 ? (
+                      <div className="py-20 text-center text-gray-400 font-medium italic bg-white rounded-xl border border-dashed border-orbe-tan">
+                        No active follow-ups found.
+                      </div>
+                    ) : (
+                      userPipeline.map(item => (
+                        <div key={`mob-pipe-${item.id}`} className="bg-orbe-cream/30 rounded-2xl border border-orbe-tan/40 overflow-hidden shadow-sm flex flex-col">
+                          <div className="p-4 flex flex-col gap-3">
+                            <div className="flex justify-between items-start">
+                              <div>
+                                <h4 className="font-black text-orbe-green text-lg leading-tight uppercase tracking-tight">{item.company}</h4>
+                                <div className="flex items-center gap-2 mt-1 text-gray-400 text-[10px] uppercase font-bold tracking-widest">
+                                  <UserCircle size={10} /> {item.owner} | #{item.client_id}
+                                </div>
+                              </div>
+                              <div className={`px-3 py-1 rounded-full font-black text-[9px] uppercase tracking-tighter border ${
+                                item.priority === 'High' ? 'bg-red-50 text-red-600 border-red-100' : 
+                                item.priority === 'Medium' ? 'bg-orange-50 text-orange-600 border-orange-100' : 
+                                'bg-blue-50 text-blue-600 border-blue-100'
+                              }`}>
+                                {item.priority}
+                              </div>
+                            </div>
+
+                            <div className="flex flex-col gap-2 bg-white/60 p-3 rounded-xl border border-orbe-tan/20">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2 text-orbe-green/70">
+                                  <Calendar size={14} />
+                                  <span className="text-xs font-black uppercase tracking-tight">Action Date</span>
+                                </div>
+                                <div className="flex flex-col items-end">
+                                  <span className="font-mono font-black text-orbe-green text-sm">{formatDateSafe(item.action_date).toUpperCase()}</span>
+                                  {isOverdue(item.action_date) && <span className="text-[9px] font-black text-red-500 uppercase tracking-tighter animate-pulse">🔴 Overdue</span>}
+                                </div>
+                              </div>
+                              <div className="h-px bg-orbe-tan/20 my-1" />
+                              <div className="flex items-start gap-2">
+                                <div className="p-1.5 bg-orbe-tan/10 rounded-lg text-orbe-tan mt-0.5">
+                                  <CheckSquare size={12} />
+                                </div>
+                                <div>
+                                  <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest leading-none">Last Action</p>
+                                  <p className="text-xs font-semibold text-gray-600 italic mt-1 leading-snug">"{item.last_action || 'No recent notes'}"</p>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex border-t border-orbe-tan/30 h-14">
+                            <button 
+                              onClick={() => setTaskToAccomplish(item)}
+                              className="flex-1 bg-orbe-green text-white font-black text-[10px] uppercase tracking-[0.2em] flex items-center justify-center gap-3 active:opacity-80 transition-all border-r border-white/10"
+                            >
+                              <CheckCircle size={18} /> Close
+                            </button>
+                            <button 
+                              onClick={() => setPostponeItem(item)}
+                              className="flex-1 bg-orbe-tan/20 text-orbe-green font-black text-[10px] uppercase tracking-[0.2em] flex items-center justify-center gap-3 active:bg-orbe-tan/40 transition-all"
+                            >
+                              <Calendar size={18} /> Postpone
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                  <p className="text-xs text-gray-400 font-medium">Mostrando {userPipeline.length} seguimientos activos para {currentUser}</p>
+                </div>
+              </motion.div>
             )}
 
             {view === 'control' && (
-              <Dashboards 
-                pipeline={pipeline}
-                dashboardTab={dashboardTab}
-                setDashboardTab={setDashboardTab}
-                clientsCount={clients.length}
-              />
+              <motion.div 
+                key="control-view"
+                initial={{ opacity: 0, scale: 0.98 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 1.02 }}
+                className="space-y-6 flex-1 flex flex-col overflow-y-auto pr-2"
+              >
+                {/* SUB-NAVIGATION TABS */}
+                <div className="flex items-center gap-1 bg-orbe-tan/10 p-1 rounded-xl w-fit shrink-0 overflow-x-auto no-scrollbar">
+                  <button 
+                    onClick={() => setDashboardTab('priorities')}
+                    className={`px-6 py-2.5 rounded-lg text-[10px] font-black uppercase tracking-[0.1em] transition-all flex items-center gap-2 whitespace-nowrap ${dashboardTab === 'priorities' ? 'bg-orbe-green text-white shadow-md' : 'text-orbe-green hover:bg-black/5'}`}
+                  >
+                    <Target size={14} />
+                    Priorities
+                  </button>
+                  <button 
+                    onClick={() => setDashboardTab('overview')}
+                    className={`px-6 py-2.5 rounded-lg text-[10px] font-black uppercase tracking-[0.1em] transition-all flex items-center gap-2 whitespace-nowrap ${dashboardTab === 'overview' ? 'bg-orbe-green text-white shadow-md' : 'text-orbe-green hover:bg-black/5'}`}
+                  >
+                    <LayoutDashboard size={14} />
+                    Overview
+                  </button>
+                  <button 
+                    onClick={() => setDashboardTab('activity')}
+                    className={`px-6 py-2.5 rounded-lg text-[10px] font-black uppercase tracking-[0.1em] transition-all flex items-center gap-2 whitespace-nowrap ${dashboardTab === 'activity' ? 'bg-orbe-green text-white shadow-md' : 'text-orbe-green hover:bg-black/5'}`}
+                  >
+                    <ShieldCheck size={14} />
+                    Activity Control
+                  </button>
+                </div>
+
+                {dashboardTab === 'priorities' && (
+                  <div className="space-y-6 animate-in fade-in duration-300">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      {['Juanjo', 'Alejandro'].map((owner) => {
+                        const ownerTasks = pipeline.filter(p => 
+                          String(p.owner || '').toLowerCase().trim() === owner.toLowerCase() && 
+                          String(p.action_status || '').trim().toLowerCase() !== 'done'
+                        ).sort((a, b) => {
+                          const wA = PRIORITIES[a.priority as Priority] || 999;
+                          const wB = PRIORITIES[b.priority as Priority] || 999;
+                          return wA - wB;
+                        });
+
+                        return (
+                          <div key={`priorities-${owner}`} className="bg-white rounded-2xl shadow-sm border border-orbe-tan/50 overflow-hidden flex flex-col">
+                            <div className="p-4 border-b border-orbe-tan/30 bg-orbe-green/5 flex items-center gap-3">
+                              <div className="w-10 h-10 rounded-full bg-orbe-green flex items-center justify-center text-white font-black text-sm shadow-sm">
+                                {owner[0]}
+                              </div>
+                              <div>
+                                <h4 className="text-sm font-black text-orbe-green uppercase tracking-tight">{owner}</h4>
+                                <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest leading-none mt-1">Priority Ranking</p>
+                              </div>
+                            </div>
+                            
+                            <div className="overflow-auto bg-white max-h-[600px]">
+                              <table className="w-full text-left border-collapse">
+                                <thead className="bg-[#fcfaf7] sticky top-0 border-b border-orbe-tan/30 z-10">
+                                  <tr>
+                                    <th className="p-3 text-[9px] font-bold text-gray-400 uppercase tracking-widest">Company</th>
+                                    <th className="p-3 text-[9px] font-bold text-gray-400 uppercase tracking-widest">Next Action</th>
+                                    <th className="p-3 text-[9px] font-bold text-gray-400 uppercase tracking-widest">Priority</th>
+                                    <th className="p-3 text-[9px] font-bold text-gray-400 uppercase tracking-widest text-right">Status</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-orbe-tan/10 text-[11px]">
+                                  {ownerTasks.length === 0 ? (
+                                    <tr>
+                                      <td colSpan={4} className="p-10 text-center text-[11px] text-gray-400 italic">No priorities defined</td>
+                                    </tr>
+                                  ) : (
+                                    ownerTasks.map(item => (
+                                      <tr key={`prio-row-${item.id}`} className="hover:bg-orbe-cream/20 transition-colors">
+                                        <td className="p-3">
+                                          <div className="font-bold text-orbe-green">{item.company}</div>
+                                        </td>
+                                        <td className="p-3 text-gray-500 italic">
+                                          {item.last_action}
+                                        </td>
+                                        <td className="p-3">
+                                          <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest ${
+                                            item.priority === 'High' ? 'bg-red-50 text-red-600 border border-red-100' :
+                                            item.priority === 'Medium' ? 'bg-orange-50 text-orange-600 border border-orange-100' :
+                                            'bg-blue-50 text-blue-600 border border-blue-100'
+                                          }`}>
+                                            {item.priority}
+                                          </span>
+                                        </td>
+                                        <td className="p-3 text-right">
+                                          <span className={`text-[8px] font-bold uppercase tracking-tighter ${
+                                            item.status === 'Client' ? 'text-green-600' : 'text-orbe-tan'
+                                          }`}>
+                                            {item.status || 'Pot.'}
+                                          </span>
+                                        </td>
+                                      </tr>
+                                    ))
+                                  )}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {dashboardTab === 'overview' && (
+                  <div className="space-y-8 animate-in fade-in duration-300">
+                    {/* 1. SECCIÓN VISUAL - MÉTRICAS CRÍTICAS COMPACTAS */}
+                <div className="grid grid-cols-3 gap-2">
+                  {/* Total Overdue */}
+                  <div className="bg-white p-2 md:p-3 rounded-lg border border-orbe-tan/30 shadow-sm flex flex-col items-center md:items-start justify-center gap-1">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 md:p-2 bg-red-50 text-red-500 rounded-lg">
+                        <Clock size={16} />
+                      </div>
+                      <span className="hidden md:inline text-[8px] font-black text-red-500 bg-red-50 px-1.5 py-0.5 rounded uppercase tracking-widest">Red Alert</span>
+                    </div>
+                    <div className="text-center md:text-left">
+                      <h3 className="text-lg md:text-xl font-black text-orbe-green leading-none">
+                        {pipeline.filter(p => isOverdue(p.action_date) && String(p.action_status || '').trim().toLowerCase() !== 'done').length}
+                      </h3>
+                      <p className="text-[7px] md:text-[9px] font-bold text-gray-400 uppercase tracking-widest mt-0.5">Overdue</p>
+                    </div>
+                  </div>
+
+                  {/* Unassigned Potentials */}
+                  <div className="bg-white p-2 md:p-3 rounded-lg border border-orbe-tan/30 shadow-sm flex flex-col items-center md:items-start justify-center gap-1">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 md:p-2 bg-orbe-tan/10 text-orbe-tan rounded-lg">
+                        <Users size={16} />
+                      </div>
+                      <span className="hidden md:inline text-[8px] font-black text-orbe-tan bg-orbe-tan/10 px-1.5 py-0.5 rounded uppercase tracking-widest text-opacity-70">Pending</span>
+                    </div>
+                    <div className="text-center md:text-left">
+                      <h3 className="text-lg md:text-xl font-black text-orbe-green leading-none">
+                        {clients.length - assignedClientIds.size}
+                      </h3>
+                      <p className="text-[7px] md:text-[9px] font-bold text-gray-400 uppercase tracking-widest mt-0.5">Unassigned</p>
+                    </div>
+                  </div>
+
+                  {/* Follow-ups in Progress */}
+                  <div className="bg-white p-2 md:p-3 rounded-lg border border-orbe-tan/30 shadow-sm flex flex-col items-center md:items-start justify-center gap-1">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 md:p-2 bg-orange-50 text-orange-500 rounded-lg">
+                        <Database size={16} />
+                      </div>
+                      <span className="hidden md:inline text-[8px] font-black text-orange-500 bg-orange-50 px-1.5 py-0.5 rounded uppercase tracking-widest">Follow-up</span>
+                    </div>
+                    <div className="text-center md:text-left">
+                      <h3 className="text-lg md:text-xl font-black text-orbe-green leading-none">
+                        {pipeline.filter(p => String(p.action_status || '').trim().toLowerCase() !== 'done').length}
+                      </h3>
+                      <p className="text-[7px] md:text-[9px] font-bold text-gray-400 uppercase tracking-widest mt-0.5">Active</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 2. SECCIÓN MÓVIL: URGENCIAS DEL VENDEDOR */}
+                <div className="md:hidden flex-1 flex flex-col gap-4">
+                  <div className="flex items-center justify-between px-2">
+                    <h4 className="text-xl font-black text-orbe-green uppercase tracking-tighter">My Pending Tasks</h4>
+                    <span className="text-[10px] font-black bg-orbe-green text-white px-3 py-1 rounded-full uppercase tracking-widest tracking-tight">Active: {pipeline.filter(p => (p.owner === currentUser || (currentUser === 'All' && ['juanjo', 'alejandro'].includes(String(p.owner || '').toLowerCase().trim()))) && String(p.action_status || '').trim().toLowerCase() !== 'done').length}</span>
+                  </div>
+                  
+                  <div className="flex-1 space-y-3 pb-20">
+                    {pipeline
+                      .filter(p => (p.owner === currentUser || (currentUser === 'All' && ['juanjo', 'alejandro'].includes(String(p.owner || '').toLowerCase().trim()))) && String(p.action_status || '').trim().toLowerCase() !== 'done')
+                      .sort((a, b) => new Date(a.action_date).getTime() - new Date(b.action_date).getTime())
+                      .map(item => (
+                        <button 
+                          key={`dash-mob-${item.id}`}
+                          onClick={() => {
+                            setSearchTerm(item.company);
+                            setView('pipeline');
+                          }}
+                          className={`w-full text-left bg-white p-4 rounded-2xl border flex items-center gap-4 transition-all active:scale-95 shadow-sm overflow-hidden relative group ${isOverdue(item.action_date) ? 'border-red-200' : 'border-orbe-tan/30'}`}
+                        >
+                          {isOverdue(item.action_date) && <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-red-500" />}
+                          <div className={`p-3 rounded-xl ${isOverdue(item.action_date) ? 'bg-red-50 text-red-500' : 'bg-orbe-green/5 text-orbe-green'}`}>
+                            {isOverdue(item.action_date) ? <AlertCircle size={20} /> : <Calendar size={20} />}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex justify-between items-start">
+                              <p className="font-black text-orbe-green text-sm truncate uppercase tracking-tight">{item.company}</p>
+                              <p className={`font-mono font-black text-[10px] ${isOverdue(item.action_date) ? 'text-red-600' : 'text-gray-400'}`}>{formatDateSafe(item.action_date).toUpperCase()}</p>
+                            </div>
+                            <p className="text-[10px] text-gray-400 italic truncate mt-0.5">"{item.last_action || 'No notes'}"</p>
+                          </div>
+                          <div className="text-orbe-tan group-active:translate-x-1 transition-transform">
+                            <ChevronRight size={18} />
+                          </div>
+                        </button>
+                      ))}
+                    {pipeline.filter(p => (p.owner === currentUser || (currentUser === 'All' && ['juanjo', 'alejandro'].includes(String(p.owner || '').toLowerCase().trim()))) && String(p.action_status || '').trim().toLowerCase() !== 'done').length === 0 && (
+                      <div className="py-20 text-center bg-green-50/30 rounded-3xl border-2 border-dashed border-green-200 flex flex-col items-center">
+                        <div className="w-16 h-16 bg-green-100 text-green-600 rounded-full flex items-center justify-center mb-4">
+                          <CheckCircle size={32} />
+                        </div>
+                        <p className="text-green-800 font-black text-lg uppercase tracking-tight">You're All Caught Up!</p>
+                        <p className="text-green-600/70 text-sm font-medium">No pending tasks for today.</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+                </div>
+                )}
+
+                {dashboardTab === 'activity' && (
+                  <div className="space-y-8 animate-in fade-in duration-300">
+                    {/* CONTROL DE ACTIVIDAD */}
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-2 px-1">
+                        <ShieldCheck size={20} className="text-orbe-green" />
+                        <h4 className="text-lg font-black text-orbe-green uppercase tracking-tight">Activity Control (Actions per Salesperson)</h4>
+                      </div>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        {['Juanjo', 'Alejandro'].map((owner) => {
+                          const now = new Date();
+                          const getCount = (days: number) => {
+                            const limit = new Date();
+                            limit.setDate(now.getDate() - days);
+                            return pipeline.filter(p => 
+                              p.owner === owner && 
+                              parseFlexibleDate(p.last_contact_date) && 
+                              parseFlexibleDate(p.last_contact_date)! >= limit
+                            ).length;
+                          };
+
+                          const postponedCount = pipeline.filter(p => 
+                            p.owner === owner && 
+                            String(p.action_status || '').trim().toLowerCase() === 'postpone'
+                          ).length;
+
+                          return (
+                            <div key={`activity-tab-${owner}`} className="bg-white rounded-2xl p-6 border border-orbe-tan/50 shadow-sm flex flex-col gap-6 transition-all hover:shadow-md">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-4">
+                                  <div className="w-12 h-12 rounded-2xl bg-orbe-green/10 flex items-center justify-center text-orbe-green font-black text-xl">
+                                    {owner[0]}
+                                  </div>
+                                  <div>
+                                    <h5 className="font-black text-orbe-green text-lg leading-none">{owner}</h5>
+                                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Action Metrics</p>
+                                  </div>
+                                </div>
+                                <div className="flex flex-col items-end">
+                                  <span className="text-[10px] font-black text-orange-500 uppercase tracking-widest">Postponed</span>
+                                  <div className="flex items-center gap-1.5">
+                                    <History size={14} className="text-orange-400" />
+                                    <span className="text-xl font-black text-orange-500">{postponedCount}</span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-3 gap-4">
+                                {[
+                                  { label: '7 días', val: getCount(7), color: 'bg-green-50 text-green-600 border-green-100' },
+                                  { label: '14 días', val: getCount(14), color: 'bg-orange-50 text-orange-600 border-orange-100' },
+                                  { label: '30 días', val: getCount(30), color: 'bg-orbe-green text-white border-orbe-green' },
+                                ].map(card => (
+                                  <div key={card.label} className={`${card.color} p-4 rounded-xl border flex flex-col items-center justify-center transition-transform hover:scale-105 cursor-default`}>
+                                    <span className="text-2xl font-black">{card.val}</span>
+                                    <span className="text-[8px] font-bold uppercase tracking-widest mt-1 opacity-80">{card.label}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="bg-white rounded-2xl border border-orbe-tan/50 shadow-sm overflow-hidden">
+                      <div className="p-5 border-b border-orbe-tan/30 bg-gray-50/50 flex justify-between items-center">
+                        <div className="flex items-center gap-2">
+                          <Clock size={18} className="text-orbe-tan" />
+                          <h4 className="text-sm font-black text-orbe-green uppercase tracking-tight">Timeline of Last Contacts (Seniority)</h4>
+                        </div>
+                        <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Oldest contacts shown first</span>
+                      </div>
+                      
+                      <div className="max-h-[500px] overflow-auto">
+                        <table className="w-full text-left">
+                          <thead className="bg-[#fcfaf7] sticky top-0 border-b border-orbe-tan/30 z-10">
+                            <tr>
+                              <th className="p-4 text-[9px] font-bold text-gray-400 uppercase tracking-widest">Empresa</th>
+                              <th className="p-4 text-[9px] font-bold text-gray-400 uppercase tracking-widest">Vendedor</th>
+                              <th className="p-4 text-[9px] font-bold text-gray-400 uppercase tracking-widest">Último Contacto</th>
+                              <th className="p-4 text-[9px] font-bold text-gray-400 uppercase tracking-widest text-right">Tiempo transcurrido</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-orbe-tan/10 text-xs">
+                            {pipeline
+                              .filter(p => p.last_contact_date)
+                              .sort((a, b) => {
+                                const dA = parseFlexibleDate(a.last_contact_date)?.getTime() || 0;
+                                const dB = parseFlexibleDate(b.last_contact_date)?.getTime() || 0;
+                                return dA - dB; // Antiguo a nuevo
+                              })
+                              .map(item => {
+                                const d = parseFlexibleDate(item.last_contact_date);
+                                const daysGone = d ? Math.floor((new Date().getTime() - d.getTime()) / (1000 * 3600 * 24)) : '?';
+                                
+                                return (
+                                  <tr key={`timeline-full-${item.id}`} className="hover:bg-orbe-cream/20 transition-colors">
+                                    <td className="p-4">
+                                      <div className="font-bold text-orbe-green">{item.company}</div>
+                                      <div className="text-[9px] text-gray-400 truncate max-w-[200px]">{item.last_action}</div>
+                                    </td>
+                                    <td className="p-4">
+                                      <span className="px-2 py-0.5 bg-gray-100 rounded text-[9px] font-bold text-gray-500 uppercase">{item.owner}</span>
+                                    </td>
+                                    <td className="p-4 font-mono text-gray-500">
+                                      {formatDateSafe(item.last_contact_date)}
+                                    </td>
+                                    <td className="p-4 text-right">
+                                      <span className={`font-black text-[10px] flex justify-end items-center gap-1.5 ${Number(daysGone) > 30 ? 'text-red-500' : Number(daysGone) > 14 ? 'text-orange-500' : 'text-green-500'}`}>
+                                        {Number(daysGone) > 30 && <AlertCircle size={12} />}
+                                        {daysGone} days ago
+                                      </span>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {dashboardTab === 'overview' && (
+                  <div className="hidden md:grid grid-cols-2 gap-6">
+                    {['Alejandro', 'Juanjo'].map((owner) => {
+                      const ownerActions = pipeline.filter(p => 
+                        p.owner === owner && 
+                        String(p.action_status || '').trim().toLowerCase() !== 'done'
+                      );
+                      const overdueActions = ownerActions.filter(p => isOverdue(p.action_date));
+                      
+                      return (
+                        <div key={`overview-tasks-${owner}`} className="bg-white rounded-2xl shadow-sm border border-orbe-tan/50 overflow-hidden flex flex-col flex-1 min-h-[500px]">
+                          <div className="p-4 border-b border-orbe-tan/30 bg-gray-50/50 flex justify-between items-center">
+                            <div className="flex items-center gap-3">
+                              <div className="w-8 h-8 rounded-full bg-orbe-green flex items-center justify-center text-white font-bold text-xs shadow-sm">
+                                {owner[0]}
+                              </div>
+                              <h4 className="text-sm font-black text-orbe-green uppercase tracking-tight">{owner}</h4>
+                            </div>
+                            <div className="flex gap-2">
+                               <div className="px-3 py-0.5 bg-white border border-orbe-tan/40 rounded-full text-[9px] font-bold text-gray-500">
+                                 Total: {ownerActions.length}
+                               </div>
+                               {overdueActions.length > 0 && (
+                                 <div className="px-3 py-0.5 bg-red-50 text-red-600 border border-red-100 rounded-full text-[9px] font-bold flex items-center gap-1">
+                                   <AlertCircle size={9} /> {overdueActions.length} Overdue
+                                 </div>
+                               )}
+                            </div>
+                          </div>
+                          
+                          <div className="flex-1 overflow-auto bg-white">
+                            <table className="w-full text-left border-collapse">
+                              <thead className="bg-[#fcfaf7] sticky top-0 border-b border-orbe-tan/30 z-10">
+                                <tr>
+                                  <th className="p-3 text-[9px] font-bold text-gray-400 uppercase tracking-widest">Company</th>
+                                  <th className="p-3 text-[9px] font-bold text-gray-400 uppercase tracking-widest">Due Date</th>
+                                  <th className="p-3 text-[9px] font-bold text-gray-400 uppercase tracking-widest text-right">Status</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-orbe-tan/10 text-[11px]">
+                                {ownerActions.length === 0 ? (
+                                  <tr>
+                                    <td colSpan={3} className="p-10 text-center text-[11px] text-gray-400 italic">No active follow-ups</td>
+                                  </tr>
+                                ) : (
+                                  ownerActions
+                                    .sort((a, b) => new Date(a.action_date).getTime() - new Date(b.action_date).getTime())
+                                    .map(item => (
+                                    <tr key={item.id} className="hover:bg-orbe-cream/20 transition-colors">
+                                      <td className="px-3 py-2">
+                                        <div className="font-bold text-orbe-green truncate max-w-[150px]">{item.company}</div>
+                                        <div className="text-[9px] text-gray-400 truncate max-w-[150px] italic">{item.last_action || 'No notes'}</div>
+                                      </td>
+                                      <td className="px-3 py-2 font-mono text-[10px] text-gray-500">
+                                        {formatDateSafe(item.action_date)}
+                                      </td>
+                                      <td className="px-3 py-2 text-right">
+                                        <span className={`text-[8px] font-black px-1.5 py-0.5 rounded border uppercase tracking-widest ${isOverdue(item.action_date) ? 'bg-red-50 text-red-600 border-red-100' : 'bg-green-50 text-green-600 border-green-100'}`}>
+                                          {isOverdue(item.action_date) ? 'Overdue' : 'On Time'}
+                                        </span>
+                                      </td>
+                                    </tr>
+                                  ))
+                                )}
+                              </tbody>
+                            </table>
+                          </div>
+                          
+                          <div className="p-3 bg-gray-50 border-t border-orbe-tan/20">
+                            {ownerActions.length > 0 && overdueActions.length === 0 ? (
+                              <div className="flex items-center gap-2 text-green-600 text-[9px] font-bold">
+                                <CheckCircle size={12} /> All up to date! Great job.
+                              </div>
+                            ) : ownerActions.length > 0 ? (
+                               <div className="flex items-center gap-2 text-red-500 text-[10px] font-bold">
+                                <AlertCircle size={14} /> Has urgent actions to resolve.
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-2 text-gray-400 text-[10px] font-bold">
+                                <Clock size={14} /> No recent activity.
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </motion.div>
             )}
 
           {view === 'database' && (
@@ -2123,32 +2876,259 @@ export default function App() {
           )}
         </AnimatePresence>
 
+        {/* MODAL TASK ACCOMPLISHED */}
         <AnimatePresence>
           {taskToAccomplish && (
-            <TaskModal 
-              item={taskToAccomplish}
-              onClose={() => setTaskToAccomplish(null)}
-              onConfirm={handleAccomplishTask}
-            />
-          )}
+            <motion.div 
+              key="task-modal-overlay"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-orbe-green/60 backdrop-blur-md"
+            >
+              <motion.div 
+                key="task-modal-content"
+                initial={{ scale: 0.9, y: 20 }}
+                animate={{ scale: 1, y: 0 }}
+                exit={{ scale: 0.9, y: 20 }}
+                className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden border border-orbe-tan/30"
+              >
+                <div className="bg-orbe-green p-6 text-white text-center">
+                    <CheckCircle className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                    <h2 className="text-xl font-bold">Task Completed</h2>
+                    <p className="text-white/60 text-xs uppercase tracking-widest font-bold">{taskToAccomplish.company}</p>
+                  </div>
+                  
+                    <form 
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        const formData = new FormData(e.currentTarget);
+                        handleAccomplishTask(
+                          taskToAccomplish, 
+                          formData.get('next_action') as string, 
+                          formData.get('next_due_date') as string,
+                          formData.get('comments') as string,
+                          formData.get('new_status') as PipelineStatus
+                        );
+                      }}
+                      className="p-6 md:p-8 space-y-5"
+                    >
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-[0.1em]">Next Sales Action</label>
+                          <select 
+                            name="next_action"
+                            required
+                            className="w-full p-3 bg-gray-50 border-2 border-transparent focus:border-orbe-green/30 rounded-xl outline-none transition-all text-xs font-black text-gray-700 uppercase appearance-none cursor-pointer"
+                          >
+                            {PREDEFINED_ACTIONS.map(action => (
+                              <option 
+                                key={action} 
+                                value={action}
+                                disabled={action.toLowerCase() === (taskToAccomplish.last_action || '').toLowerCase()}
+                              >
+                                {action.toUpperCase()} {action.toLowerCase() === (taskToAccomplish.last_action || '').toLowerCase() ? '(CURRENT)' : ''}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+  
+                        <div>
+                          <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-[0.1em]">Next Due Date <span className="text-red-400">*</span></label>
+                          <input 
+                            type="date"
+                            name="next_due_date"
+                            required
+                            value={accomplishDate}
+                            onChange={(e) => setAccomplishDate(e.target.value)}
+                            min={new Date().toISOString().split('T')[0]}
+                            className="w-full p-3 bg-gray-50 border-2 border-transparent focus:border-orbe-green/30 rounded-xl outline-none transition-all text-xs font-black text-gray-700 uppercase"
+                          />
+                        </div>
+                      </div>
+  
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-[0.1em]">Comments / Notes</label>
+                        <textarea 
+                          name="comments"
+                          className="w-full p-4 bg-gray-50 border border-orbe-tan/20 rounded-2xl focus:ring-4 ring-orbe-green/5 outline-none transition-all text-sm min-h-[100px] placeholder:text-gray-300 resize-none"
+                          placeholder="Add specific context for the follow-up..."
+                        />
+                      </div>
+  
+                      <div className="bg-orbe-green/5 p-5 rounded-2xl border border-orbe-green/10 space-y-3 relative overflow-hidden group">
+                        <div className="relative">
+                          <label className="flex items-center gap-2 text-[11px] font-black text-orbe-green uppercase tracking-[0.15em] mb-1">
+                            <Target size={14} className="text-orbe-green" />
+                            Update Business Stage
+                          </label>
+                          <select 
+                            name="new_status"
+                            defaultValue={taskToAccomplish.status}
+                            className="w-full p-3.5 bg-white border-2 border-orbe-green/20 rounded-xl outline-none focus:border-orbe-green focus:ring-4 ring-orbe-green/10 transition-all text-[12px] font-black text-orbe-green uppercase shadow-sm cursor-pointer"
+                          >
+                            {PIPELINE_STATUSES.map(status => (
+                              <option key={status} value={status}>{status.toUpperCase()}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+  
+                      <div className="flex flex-col md:flex-row gap-3 pt-2">
+                        <button 
+                          type="submit"
+                          disabled={!accomplishDate}
+                          className="flex-1 py-4 bg-orbe-green text-white rounded-2xl font-black text-[11px] uppercase tracking-[0.2em] hover:bg-orbe-green/90 transition-all shadow-xl shadow-orbe-green/10 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:grayscale"
+                        >
+                          Confirm & Schedule
+                        </button>
+                        <button 
+                          type="button"
+                          onClick={() => {
+                            setTaskToAccomplish(null);
+                            setAccomplishDate('');
+                          }}
+                          className="py-4 px-6 md:px-8 bg-gray-100 text-gray-400 rounded-2xl font-black text-[11px] uppercase tracking-[0.1em] hover:bg-gray-200 transition-all"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </form>
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
+        {/* MODAL POSTPONE */}
+        <AnimatePresence>
           {postponeItem && (
-            <PostponeModal 
-              item={postponeItem}
-              onClose={() => {
-                setPostponeItem(null);
-                setIsConfirmingPostpone(false);
-                setPostponeReason('');
-              }}
-              onConfirm={handlePostponeTask}
-              postponeDate={postponeDate}
-              setPostponeDate={setPostponeDate}
-              postponeReason={postponeReason}
-              setPostponeReason={setPostponeReason}
-              isConfirming={isConfirmingPostpone}
-              setIsConfirming={setIsConfirmingPostpone}
-              formatDateSafe={formatDateSafe}
-            />
+            <motion.div 
+              key="postpone-modal-overlay"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-orbe-green/40 backdrop-blur-sm"
+            >
+              <motion.div 
+                key="postpone-modal-content"
+                initial={{ scale: 0.9, y: 20 }}
+                animate={{ scale: 1, y: 0 }}
+                exit={{ scale: 0.9, y: 20 }}
+                className="bg-white w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden border border-orbe-tan/30"
+              >
+                <div className="bg-orbe-green p-6 text-white text-center">
+                  <Calendar className="w-10 h-10 mx-auto mb-2 opacity-50" />
+                  <h2 className="text-xl font-bold">Postpone Action</h2>
+                  <p className="text-white/60 text-xs uppercase tracking-widest font-bold">{postponeItem.company}</p>
+                </div>
+                
+                <form 
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (!postponeReason || !postponeReason.trim()) {
+                      alert("Please provide a reason for postponing.");
+                      setIsConfirmingPostpone(false);
+                      return;
+                    }
+                    handlePostponeTask(postponeItem, postponeDate, postponeReason);
+                  }}
+                  className="p-8 space-y-6"
+                >
+                  {!isConfirmingPostpone ? (
+                    <>
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-3 tracking-widest text-center">Select New Action Date</label>
+                        <input 
+                          type="date"
+                          min={new Date().toISOString().split('T')[0]}
+                          max={(() => {
+                            const d = new Date();
+                            d.setMonth(d.getMonth() + 3);
+                            return d.toISOString().split('T')[0];
+                          })()}
+                          value={postponeDate}
+                          onChange={(e) => setPostponeDate(e.target.value)}
+                          className="w-full p-4 bg-gray-50 border border-orbe-tan/30 rounded-xl focus:ring-2 ring-orbe-green/10 outline-none transition-all text-sm font-bold text-orbe-green text-center"
+                        />
+                        <p className="mt-2 text-[9px] text-gray-400 text-center italic">Limit: Next 3 months</p>
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-3 tracking-widest">Reason for postponing <span className="text-red-400">*</span></label>
+                        <textarea 
+                          value={postponeReason}
+                          onChange={(e) => setPostponeReason(e.target.value)}
+                          required
+                          className="w-full p-4 bg-gray-50 border border-orbe-tan/30 rounded-xl focus:ring-2 ring-orbe-green/10 outline-none transition-all text-sm min-h-[80px]"
+                          placeholder="Why are you rescheduling?"
+                        />
+                      </div>
+
+                      <div className="flex flex-col gap-3">
+                        <button 
+                          type="button"
+                          onClick={() => {
+                            if (!postponeDate) {
+                              alert("Please select a date.");
+                              return;
+                            }
+                            if (!postponeReason || !postponeReason.trim()) {
+                              alert("Please provide a reason for postponing.");
+                              return;
+                            }
+                            setIsConfirmingPostpone(true);
+                          }}
+                          className="w-full py-4 bg-orbe-green text-white rounded-xl font-bold text-xs uppercase tracking-widest hover:opacity-90 transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2"
+                        >
+                          <Save size={14} />
+                          Continue
+                        </button>
+                        <button 
+                          type="button"
+                          onClick={() => {
+                            setPostponeItem(null);
+                            setPostponeDate('');
+                            setPostponeReason('');
+                            setIsConfirmingPostpone(false);
+                          }} 
+                          className="w-full py-4 bg-gray-100 text-gray-500 rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-gray-200 transition-all"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-center space-y-6 py-2">
+                      <div className="w-16 h-16 bg-orange-50 text-orange-500 rounded-full flex items-center justify-center mx-auto mb-4 border border-orange-100">
+                        <AlertCircle size={32} />
+                      </div>
+                      <div className="space-y-2">
+                        <h3 className="font-bold text-orbe-green">Confirm rescheduling?</h3>
+                        <p className="text-sm text-gray-500">
+                          You are about to postpone this action until <span className="font-black text-orbe-green">{formatDateSafe(postponeDate, { day: '2-digit', month: 'long', year: 'numeric' })}</span>.
+                        </p>
+                      </div>
+                      
+                      <div className="flex flex-col gap-3 pt-4">
+                        <button 
+                          type="submit"
+                          className="w-full py-4 bg-orbe-green text-white rounded-xl font-bold text-xs uppercase tracking-widest hover:opacity-90 transition-all shadow-lg active:scale-95"
+                        >
+                          YES, CONFIRM
+                        </button>
+                        <button 
+                          type="button"
+                          onClick={() => setIsConfirmingPostpone(false)}
+                          className="w-full py-4 bg-gray-100 text-gray-500 rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-gray-200 transition-all"
+                        >
+                          NO, GO BACK
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </form>
+              </motion.div>
+            </motion.div>
           )}
         </AnimatePresence>
 
