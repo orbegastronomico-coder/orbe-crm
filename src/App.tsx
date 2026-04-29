@@ -10,8 +10,9 @@ import {
   Search, AlertCircle, CheckCircle, CheckCircle2, Calendar, 
   UserCircle, Mail, Phone, MapPin, ChevronRight, PhoneCall,
   Filter, MoreHorizontal, LogOut, Briefcase, Clock, CheckSquare,
-  Settings, Save, XCircle, History, ArrowLeft, Loader2,
-  Mic, MicOff, Leaf, Eye, EyeOff, ShieldCheck, Target, Zap
+  Settings, Save, XCircle, History, ArrowLeft, Loader2, Star,
+  Mic, MicOff, Leaf, Eye, EyeOff, ShieldCheck, Target, Zap, ArrowUpDown,
+  Edit2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -39,6 +40,7 @@ const PREDEFINED_ACTIONS = [
   'Send email',
   'Send email with catalogue',
   'Call',
+  'WhatsApp/IG message',
   'Visit',
   'Meeting',
   'Drop samples'
@@ -57,21 +59,21 @@ type Priority = keyof typeof PRIORITIES;
 type PredefinedAction = typeof PREDEFINED_ACTIONS[number];
 
 interface Client {
-  id: string | number;
-  company: string;
-  contact_person: string;
+  client_id: string | number;
+  company_name: string;
+  contact_name: string;
   lead_name: string;
   email: string;
   phone: string;
   mobile: string;
-  address: string;
+  address_line_1: string;
   website?: string;
-  status_possible?: string;
-  sector?: string;
-  location?: string;
+  pipeline_stage?: string;
+  industry?: string;
+  country?: string;
   city?: string;
   postal_code?: string;
-  description?: string;
+  notes?: string;
   client_status?: 'Potential client' | 'Client' | 'Temporary Discarded';
   created_at?: string;
 }
@@ -79,16 +81,16 @@ interface Client {
 interface PipelineItem {
   id: string | number;
   client_id: string | number;
-  company?: string; // Joined field
+  company_name?: string; // Joined field
   client_status?: string; // Joined field from clients table
-  owner: User;
+  owner_id: User;
   status: PipelineStatus;
   last_contact_date: string;
-  samples: string;
-  last_action: string;
+  samples_sent: string;
+  last_activity: string;
   notes?: string;
   priority: Priority;
-  action_date: string;
+  next_action_date: string;
   action_status: 'Pending' | 'Done' | string;
   created_at?: string;
 }
@@ -97,16 +99,17 @@ interface HistoryEntry {
   id: string | number;
   client_id: string | number;
   type: 'status_change' | 'note' | 'system' | 'priority_change';
-  content: string;
+  last_activity: string;
   notes?: string;
+  next_action_date: string;
   created_at: string;
   created_by: string;
 }
 
 const MOCK_CLIENTS: Client[] = [
-  { id: 1, company: 'Tech Solutions SL', contact_person: 'Ana García', lead_name: 'Lead Orbe A', email: 'ana@tech.com', phone: '600111222', mobile: '699000111', address: 'Calle Falsa 123', client_status: 'Potential client' },
-  { id: 2, company: 'Construcciones Orbe', contact_person: 'Luis Perez', lead_name: 'Lead Orbe B', email: 'luis@orbe.es', phone: '655333444', mobile: '688222333', address: 'Av. Principal 45', client_status: 'Client' },
-  { id: 3, company: 'Digital Marketing Inc', contact_person: 'Elena Rius', lead_name: 'Lead Orbe C', email: 'elena@dm.com', phone: '677888999', mobile: '611444555', address: 'Business Park B', client_status: 'Temporary Discarded' }
+  { client_id: 1, company_name: 'Tech Solutions SL', contact_name: 'Ana García', lead_name: 'Lead Orbe A', email: 'ana@tech.com', phone: '600111222', mobile: '699000111', address_line_1: 'Calle Falsa 123', client_status: 'Potential client' },
+  { client_id: 2, company_name: 'Construcciones Orbe', contact_name: 'Luis Perez', lead_name: 'Lead Orbe B', email: 'luis@orbe.es', phone: '655333444', mobile: '688222333', address_line_1: 'Av. Principal 45', client_status: 'Client' },
+  { client_id: 3, company_name: 'Digital Marketing Inc', contact_name: 'Elena Rius', lead_name: 'Lead Orbe C', email: 'elena@dm.com', phone: '677888999', mobile: '611444555', address_line_1: 'Business Park B', client_status: 'Temporary Discarded' }
 ];
 
 export default function App() {
@@ -118,7 +121,7 @@ export default function App() {
   const [loginError, setLoginError] = useState<string | null>(null);
 
   const [view, setView] = useState<'pipeline' | 'new' | 'database' | 'control'>('pipeline');
-  const [dashboardTab, setDashboardTab] = useState<'priorities' | 'overview' | 'activity'>('priorities');
+  const [dashboardTab, setDashboardTab] = useState<'priorities' | 'overview' | 'activity'>('overview');
   const [currentUser, setCurrentUser] = useState<User>(() => {
     const saved = localStorage.getItem('orbe_user');
     return (saved && USERS.includes(saved as User)) ? (saved as User) : USERS[0];
@@ -180,11 +183,18 @@ export default function App() {
   const [statusFilter, setStatusFilter] = useState<'All' | 'Potential client' | 'Client' | 'Temporary Discarded'>('All');
   const [taskToAccomplish, setTaskToAccomplish] = useState<PipelineItem | null>(null);
   const [postponeItem, setPostponeItem] = useState<PipelineItem | null>(null);
+  const [editingItem, setEditingItem] = useState<PipelineItem | null>(null);
   const [postponeDate, setPostponeDate] = useState('');
   const [postponeReason, setPostponeReason] = useState('');
+  const [modalError, setModalError] = useState<string | null>(null);
+  const [sortBy, setSortBy] = useState<'priority' | 'action_date' | 'last_contact'>('priority');
   const [accomplishDate, setAccomplishDate] = useState('');
+  const [accomplishAction, setAccomplishAction] = useState('');
   const [isConfirmingPostpone, setIsConfirmingPostpone] = useState(false);
   const [pipelineColumns, setPipelineColumns] = useState<string[]>([]);
+  const [selectedActivityList, setSelectedActivityList] = useState<{ owner: string, days: number, items: PipelineItem[] } | null>(null);
+  const [timelineSellerFilter, setTimelineSellerFilter] = useState<User>('All');
+  const [timelineTemperature, setTimelineTemperature] = useState<'Active' | 'Warning' | 'Cold'>('Active');
 
   // Wizard estados para asignación
   const [assigningClient, setAssigningClient] = useState<Client | null>(null);
@@ -193,13 +203,13 @@ export default function App() {
 
   // Estados para el formulario de nuevo cliente (controlados para IA)
   const [newClientForm, setNewClientForm] = useState({
-    company: '',
+    company_name: '',
     contact_name: '',
     email: '',
     phone: '',
     mobile: '',
-    address: '',
-    description: ''
+    address_line_1: '',
+    notes: ''
   });
   const [isScanning, setIsScanning] = useState(false);
   const [isListening, setIsListening] = useState(false);
@@ -254,13 +264,13 @@ export default function App() {
     // pero aquí lo usamos para asegurar que el estado inicial es limpio
     if (view === 'database') {
       setNewClientForm({
-        company: '',
+        company_name: '',
         contact_name: '',
         email: '',
         phone: '',
         mobile: '',
-        address: '',
-        description: ''
+        address_line_1: '',
+        notes: ''
       });
     }
     
@@ -299,21 +309,21 @@ export default function App() {
 
       // Sanear Clientes
       const sanitizedClients = (clientsData || []).map((c: any) => ({
-        id: c.id || c.ID || c.n || c.N,
-        company: c.company || c.Company || c.Empresa || c.empresa || 'Empresa sin nombre',
-        contact_person: c.contact_person || c.contact_name || c['Contact name'] || c['Contact Name'] || c.persona_contacto || c['Nombre del Contacto'] || c['Persona de contacto'] || '',
+        client_id: c.client_id || c.id || c.ID || c.n || c.N,
+        company_name: c.company_name || c.Company || c.Empresa || c.empresa || 'Empresa sin nombre',
+        contact_name: c.contact_name || c.contact_person || c['Contact name'] || c['Contact Name'] || c.persona_contacto || c['Nombre del Contacto'] || c['Persona de contacto'] || '',
         lead_name: c.lead_name || c.lead || c.Lead || c.Referencia || c['Lead Name'] || '',
         email: c.email || c.Email || c['Correo Electrónico'] || c['Correo electrónico'] || c.correo || '',
         phone: c.phone || c['Teléfono'] || c.telefono || '',
         mobile: c.mobile || c['Móvil'] || c.movil || '',
-        address: c.address || c['Dirección'] || c.direccion || c.Adress || '',
+        address_line_1: c.address_line_1 || c.address || c['Dirección'] || c.direccion || c.Adress || '',
         website: c.website || c['Sitio web'] || c['Sitio Web'] || '',
-        status_possible: c.status_possible || c['Estado de Posible cliente'] || '',
-        sector: c.sector || c.Sector || '',
-        location: c.location || c.Location || '',
+        pipeline_stage: c.pipeline_stage || c.status_possible || c['Estado de Posible cliente'] || '',
+        industry: c.industry || c.sector || c.Sector || '',
+        country: c.country || c.location || c.Location || '',
         city: c.city || c.Ciudad || '',
         postal_code: c.postal_code || c['Código postal'] || '',
-        description: c.description || c.desc || c.Descripción || c.Descripcion || '',
+        notes: c.notes || c.description || c.desc || c.Descripción || c.Descripcion || '',
         client_status: c.client_status || 'Potential client',
         created_at: c.created_at
       }));
@@ -321,45 +331,46 @@ export default function App() {
       // Sanear Pipeline y vincular con compañía
       const sanitizedPipeline = (pipelineData || []).map((p: any) => {
         const cId = p.client_id || p.id_cliente || p.ID_CLIENTE || p.cliente_id;
-        const relatedClient = sanitizedClients.find(c => String(c.id) === String(cId));
-        const dbOwner = p.owner || p.Owner || p.assigned_to || p.assigned_to_user || p.operador || p.dueño;
+        const relatedClient = sanitizedClients.find(c => String(c.client_id) === String(cId));
+        const dbOwner = p.owner_id || p.owner || p.Owner || p.assigned_to || p.assigned_to_user || p.operador || p.dueño;
         const dbPriority = p.priority || p.Priority || p.prioridad || 'Medium';
-        const dbStatus = p.status || p.Status || p.estado || 'Pending';
+        const dbStatus = p.client_status || p.status || p.Status || p.estado || 'Pending';
 
         // Identificar fechas con múltiples fallbacks y validación estricta usando parseFlexibleDate
         const rawLastContact = p.last_contact_date || p['last contact date'] || p.last_contact || p.fecha_contacto || p.updated_at || p.created_at;
         const parsedLastContact = parseFlexibleDate(rawLastContact);
         const lastContact = parsedLastContact ? parsedLastContact.toISOString() : new Date().toISOString();
 
-        const rawActionDate = p['actions date'] || p['action date'] || p.action_date || p.fecha_accion || p.next_step;
+        const rawActionDate = p.next_action_date || p['actions date'] || p['action date'] || p.action_date || p.fecha_accion || p.next_step;
         const parsedActionDate = parseFlexibleDate(rawActionDate);
         // NO calcular automáticamente si no viene en DB, mejor dejarlo como null o usar fallback si realmente es necesario
         const actionDateVal = parsedActionDate ? parsedActionDate.toISOString() : calculateActionDate(dbPriority as Priority);
 
         const dbActionStatus = p.action_status || p['action status'] || p['Action Status'] || p['Action status'] || p.estado_accion || 'Pending';
+        const dbCreatedAt = p.created_at || p['created at'] || p['Created At'] || p.inserted_at || p.fecha_creacion || p.timestamp || p.date_created || p.created;
 
         return {
           id: p.id || p.ID || p.n || p.N,
           client_id: cId,
-          company: relatedClient?.company || 'Cliente Desconocido',
+          company_name: relatedClient?.company_name || 'Cliente Desconocido',
           client_status: relatedClient?.client_status || 'Potential client',
-          owner: dbOwner || currentUser,
+          owner_id: (dbOwner || currentUser) as User,
           status: dbStatus,
           last_contact_date: lastContact,
-          samples: p.samples || p.Samples || p.muestras || '-',
-          last_action: p.last_action || p.LastAction || p.accion || 'Seguimiento iniciado',
+          samples_sent: p.samples_sent || p.samples || p.Samples || p.muestras || '-',
+          last_activity: p.last_activity || p.last_action || p.LastAction || p.accion || 'Seguimiento iniciado',
           notes: p.notes || p.notas || '',
           priority: dbPriority as Priority,
-          action_date: actionDateVal,
+          next_action_date: actionDateVal,
           action_status: dbActionStatus,
-          created_at: p.created_at
+          created_at: dbCreatedAt
         };
       });
       
       // Ordenar pipeline por fecha de acción
       sanitizedPipeline.sort((a, b) => {
-        const dateA = new Date(a.action_date).getTime();
-        const dateB = new Date(b.action_date).getTime();
+        const dateA = new Date(a.next_action_date).getTime();
+        const dateB = new Date(b.next_action_date).getTime();
         if (isNaN(dateA)) return 1;
         if (isNaN(dateB)) return -1;
         return dateA - dateB;
@@ -465,21 +476,17 @@ export default function App() {
 
     try {
       // Función auxiliar para intentar buscar por varias columnas posibles
-      const fetchRobust = async (table: string, id: string | number) => {
+      const fetchRobust = async (table: string, idVal: string | number) => {
         const columns = ['client_id', 'id_cliente', 'cliente_id', 'ID_CLIENTE'];
         for (const col of columns) {
           try {
-            const { data, error } = await supabase
-              .from(table)
-              .select('*')
-              .eq(col, id);
-            
-            // Si funciona y no hay error de columna inexistente, devolvemos los datos
-            if (!error) return data || [];
-            // Si el error no es de "columna no existe", lanzamos el error
-            if (!error.message.includes('column') || !error.message.includes('not exist')) {
-               console.warn(`Error en tabla ${table} columna ${col}:`, error.message);
+            const query = supabase.from(table).select('*').eq(col, idVal);
+            // Requerimiento: Ordenar por ID descendente para el historial
+            if (table === 'client_history') {
+              query.order('id', { ascending: false });
             }
+            const { data, error } = await query;
+            if (!error) return data || [];
           } catch (e) {
             continue;
           }
@@ -487,15 +494,29 @@ export default function App() {
         return [];
       };
 
+      // 1. Cargar desde client_history (Fuente principal de logs)
+      const histData = await fetchRobust('client_history', clientId);
+      const historyRecords: HistoryEntry[] = (histData || []).map(h => ({
+        id: h.id, // ID secuencial real
+        client_id: h.client_id,
+        type: h.type || 'note',
+        last_activity: h.last_activity || h.content || 'Acción sin detalle',
+        notes: h.notes || '',
+        next_action_date: h.next_action_date || h.created_at,
+        created_at: h.created_at,
+        created_by: h.created_by
+      }));
+
       // 2. Cargar hitos de la tabla pipeline
       const pipeData = await fetchRobust('pipeline', clientId);
-
+      
       // Convertir registros de pipeline a formato de historial
       const pipelineHistory: HistoryEntry[] = (pipeData || []).map(p => {
         const cId = p.client_id || p.id_cliente || p.cliente_id || p.ID_CLIENTE || clientId;
-        const rawActionDate = p.action_date || p['actions date'] || p['Actions Date'] || p.fecha_accion || p.fecha_seguimiento;
+        const activity = p.last_activity || p.last_action || p.LastAction || p.accion || p.Activity || 'Seguimiento';
+        const notes = p.notes || p.notas || p.Notes || p.Observaciones || '';
+        const rawActionDate = p.next_action_date || p['actions date'] || p['Actions Date'] || p['action_date'] || p.fecha_accion || p.fecha_seguimiento || p.created_at;
         const logicalDateBase = rawActionDate || p.created_at || p.updated_at || new Date().toISOString();
-        
         const parsed = parseFlexibleDate(logicalDateBase);
         const logicalDate = parsed ? parsed.toISOString() : new Date().toISOString();
         
@@ -503,17 +524,25 @@ export default function App() {
           id: `pipe-${p.id}`,
           client_id: cId,
           type: 'system',
-          content: `Acción: [${p.status || 'Pending'}] ${p.last_action || 'Sin nota'}`,
-          notes: p.notes || p.notas,
-          created_at: logicalDate, // Fecha formateada para el historial
-          created_by: p.owner || 'Sistema'
+          last_activity: `HITO: [${p.client_status || p.status || 'P'}] ${activity}`,
+          notes: notes,
+          next_action_date: logicalDate,
+          created_at: logicalDate, 
+          created_by: p.owner_id || p.owner || p.assigned_to || 'SISTEMA'
         };
       });
 
-      // Ordenar por fecha descendente
-      const unifiedHistory = pipelineHistory.sort((a, b) => 
-        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-      );
+      // Unificar y ordenar priorizando IDs numéricos descendentes
+      const unifiedHistory = [...historyRecords, ...pipelineHistory].sort((a, b) => {
+        // Si ambos son de la tabla client_history (ID numérico), usamos el ID
+        if (typeof a.id === 'number' && typeof b.id === 'number') {
+          return b.id - a.id;
+        }
+        // Si no, caemos a fecha
+        const dateA = a.next_action_date || a.created_at;
+        const dateB = b.next_action_date || b.created_at;
+        return new Date(dateB).getTime() - new Date(dateA).getTime();
+      });
 
       setClientHistory(unifiedHistory);
     } catch (err) {
@@ -523,24 +552,31 @@ export default function App() {
     }
   };
 
-  const addHistoryEntry = async (clientId: string | number, type: HistoryEntry['type'], content: string, notes?: string) => {
-    const entry = {
+  const addHistoryEntry = async (clientId: string | number, type: HistoryEntry['type'], last_activity: string, notes?: string, extraData?: any) => {
+    const entry: any = {
       client_id: clientId,
       type,
-      content,
-      notes,
+      last_activity,
+      notes: notes || '',
+      next_action_date: new Date().toISOString(),
       created_at: new Date().toISOString(),
-      created_by: currentUser
+      created_by: currentUser || session?.user?.email || 'Sistema'
     };
 
-    // Siempre actualizamos localmente para feedback inmediato
-    setClientHistory(prev => [ { id: Math.random(), ...entry } as HistoryEntry, ...prev]);
+    if (extraData) {
+      Object.assign(entry, extraData);
+    }
+
+    // Siempre actualizamos localmente para feedback inmediato (ID temporal alto para que salga arriba)
+    setClientHistory(prev => [ { id: Date.now(), ...entry } as HistoryEntry, ...prev]);
 
     if (!supabase) return;
 
-    // Nota: Hemos desactivado la inserción en 'client_history' porque 
-    // ahora el historial se reconstruye dinámicamente desde la tabla 'pipeline'.
-    // Esto evita el error PGRST205.
+    try {
+      await supabase.from('client_history').insert([entry]);
+    } catch (e) {
+      console.warn("Could not save to client_history:", e);
+    }
   };
 
   const handleUpdateClient = async (id: string | number, updates: Partial<Client>) => {
@@ -556,14 +592,19 @@ export default function App() {
       const originalClient = clients.find(c => String(c.id) === String(id));
       
       const dbUpdates: any = {};
-      if (updates.company !== undefined) dbUpdates.Company = updates.company;
-      if (updates.contact_person !== undefined) dbUpdates["Contact name"] = updates.contact_person;
-      if (updates.lead_name !== undefined) dbUpdates["Lead Name"] = updates.lead_name;
-      if (updates.email !== undefined) dbUpdates["Correo electrónico"] = updates.email;
-      if (updates.phone !== undefined) dbUpdates["Teléfono"] = updates.phone;
-      if (updates.mobile !== undefined) dbUpdates["Móvil"] = updates.mobile;
-      if (updates.address !== undefined) dbUpdates["Adress"] = updates.address;
-      if (updates.description !== undefined) dbUpdates["Descripción"] = updates.description;
+      if (updates.company_name !== undefined) dbUpdates.company_name = updates.company_name;
+      if (updates.contact_name !== undefined) dbUpdates.contact_name = updates.contact_name;
+      if (updates.lead_name !== undefined) dbUpdates.lead_name = updates.lead_name;
+      if (updates.email !== undefined) dbUpdates.email = updates.email;
+      if (updates.phone !== undefined) dbUpdates.phone = updates.phone;
+      if (updates.mobile !== undefined) dbUpdates.mobile = updates.mobile;
+      if (updates.address_line_1 !== undefined) dbUpdates.address_line_1 = updates.address_line_1;
+      if (updates.notes !== undefined) dbUpdates.notes = updates.notes;
+      
+      // Fallbacks para esquemas mixtos si es necesario (según el mapping)
+      if (updates.company_name !== undefined) dbUpdates.Company = updates.company_name;
+      if (updates.address_line_1 !== undefined) dbUpdates.Adress = updates.address_line_1;
+      if (updates.notes !== undefined) dbUpdates.Descripción = updates.notes;
       
       // Try both client_status and Status
       if (updates.client_status !== undefined) {
@@ -572,7 +613,7 @@ export default function App() {
       
       console.log("Supabase Update Attempt Payload:", dbUpdates);
       
-      const idColumns = ['ID', 'id', 'n', 'N', 'ID_CLIENTE'];
+      const idColumns = ['client_id', 'ID', 'id', 'n', 'N', 'ID_CLIENTE'];
       let success = false;
       let lastError: any = null;
 
@@ -598,8 +639,8 @@ export default function App() {
       if (!success) {
         // Final attempt: maybe some columns don't exist? Try a "safe" update with only common columns
         console.log("All ID columns failed or payload rejected. Trying safe update...");
-        const safeUpdates = { Company: updates.company };
-        const { error: finalError } = await supabase.from('clients').update(safeUpdates).eq('ID', id);
+        const safeUpdates = { company_name: updates.company_name };
+        const { error: finalError } = await supabase.from('clients').update(safeUpdates).eq('client_id', id);
         if (finalError) throw lastError || finalError;
       }
       
@@ -630,7 +671,7 @@ export default function App() {
       
       const days = PRIORITIES[priority] || 7;
       baseDate.setDate(baseDate.getDate() + days);
-      updates.action_date = baseDate.toISOString();
+      updates.next_action_date = baseDate.toISOString();
     }
 
     if (!supabase) {
@@ -653,7 +694,8 @@ export default function App() {
       setPipeline(prev => [...prev, { 
         ...item, 
         id: entryId, 
-        action_date: newDate,
+        next_action_date: newDate,
+        action_status: 'Postpone',
         notes: reason,
         created_at: new Date().toISOString()
       }]);
@@ -679,29 +721,35 @@ export default function App() {
 
     // Clonamos datos del item original
     setMapping(['client_id', 'id_cliente', 'cliente_id', 'ID_CLIENTE'], item.client_id);
-    setMapping(['owner', 'operador', 'assigned_to'], (item.owner && item.owner !== 'All') ? item.owner : (currentUser === 'All' ? 'Juanjo' : currentUser));
-    setMapping(['status', 'estado', 'Status'], item.status);
-    setMapping(['last_action', 'accion', 'LastAction'], item.last_action);
+    
+    // Explicitly inherit owner from the current item to ensure persistence
+    const currentOwner = (item.owner_id && item.owner_id !== 'All') ? item.owner_id : (currentUser === 'All' ? 'Juanjo' : currentUser);
+    setMapping(['owner_id', 'owner', 'operador', 'assigned_to'], currentOwner);
+    
+    setMapping(['client_status', 'status', 'estado', 'Status'], item.client_status);
+    setMapping(['last_activity', 'last_action', 'accion', 'LastAction'], item.last_activity);
     setMapping(['priority', 'prioridad', 'Priority'], item.priority);
-    setMapping(['samples', 'muestras', 'Samples'], item.samples);
-    setMapping(['last_contact_date', 'fecha_contacto', 'last_contact'], item.last_contact_date);
-    setMapping(['company', 'Empresa'], item.company || 'Cliente');
+    setMapping(['samples_sent', 'samples', 'muestras', 'Samples'], item.samples_sent);
+    setMapping(['last_contact_date', 'fecha_contacto', 'last_contact'], new Date().toISOString());
+    setMapping(['company_name', 'company', 'Empresa'], item.company_name || 'Cliente');
     setMapping(['notes', 'notas'], reason);
 
     // Datos específicos de la posposición
-    setMapping(['actions date', 'action_date', 'fecha_accion'], newDate);
-    setMapping(['action status'], 'Postpone');
+    setMapping(['next_action_date', 'actions date', 'action_date', 'fecha_accion'], newDate);
+    setMapping(['action_status', 'action status'], 'Postpone');
 
     try {
       // 1. Marcar la acción actual como 'done'
+      const oldCol = cols.find(c => ['action_status', 'action status'].includes(c)) || 'action_status';
       const { error: updateError } = await supabase
         .from('pipeline')
-        .update({ 'action status': 'done' })
+        .update({ [oldCol]: 'Done' })
         .eq('id', item.id);
       
       if (updateError) {
-        // Fallback si la columna se llama 'action_status'
-        await supabase.from('pipeline').update({ action_status: 'done' }).eq('id', item.id);
+        console.warn("Retrying update mark as done with alternative column names");
+        const altCol = oldCol === 'action_status' ? 'action status' : 'action_status';
+        await supabase.from('pipeline').update({ [altCol]: 'Done' }).eq('id', item.id);
       }
 
       // 2. Insertar la nueva acción como 'postpone'
@@ -727,26 +775,26 @@ export default function App() {
     if (s === 'Not interested') return 'Low';
 
     if (s === 'Client') {
-      if (a.includes('email') || a.includes('call')) return 'Medium';
+      if (a.includes('email') || a.includes('call') || a.includes('whatsapp') || a.includes('ig')) return 'Medium';
       if (a.includes('visit') || a.includes('meeting') || a.includes('samples')) return 'High';
       return 'Medium';
     }
 
     if (s === 'Grajales') {
-      if (a.includes('call') || a.includes('visit') || a.includes('samples') || a.includes('meeting')) return 'Urgent';
+      if (a.includes('call') || a.includes('whatsapp') || a.includes('ig') || a.includes('visit') || a.includes('samples') || a.includes('meeting')) return 'Urgent';
       if (a.includes('email')) return 'High';
       return 'Urgent';
     }
 
     if (s === 'Baking off') {
-      if (a.includes('call') || a.includes('visit') || a.includes('meeting')) return 'High';
+      if (a.includes('call') || a.includes('whatsapp') || a.includes('ig') || a.includes('visit') || a.includes('meeting')) return 'High';
       if (a.includes('email')) return 'Medium';
       return 'High';
     }
 
     if (s === '1st contact' || s === 'Potential client') {
       if (a.includes('visit') || a.includes('meeting')) return 'High';
-      if (a.includes('call')) return 'Medium';
+      if (a.includes('call') || a.includes('whatsapp') || a.includes('ig')) return 'Medium';
       if (a.includes('email')) return 'Low';
       return 'Medium';
     }
@@ -771,7 +819,7 @@ export default function App() {
           "actions date": nextDate,
           "action status": 'Pending',
           id: entryId,
-          company: prevItem.company,
+          company_name: prevItem.company_name,
           created_at: new Date().toISOString()
         } as any];
       });
@@ -790,7 +838,7 @@ export default function App() {
     }
 
     // Asegurar que company tenga valor (evita RLS failure si es obligatorio)
-    const clientCompany = prevItem.company || clients.find(c => String(c.id) === String(prevItem.client_id))?.company || 'Cliente';
+    const clientCompany = prevItem.company_name || clients.find(c => String(c.client_id) === String(prevItem.client_id))?.company_name || 'Cliente';
 
     const payload: any = {};
     
@@ -802,13 +850,17 @@ export default function App() {
     };
 
     setMapping(['client_id', 'id_cliente', 'cliente_id', 'ID_CLIENTE'], prevItem.client_id);
-    setMapping(['owner', 'operador', 'assigned_to'], currentUser === 'All' ? 'Juanjo' : currentUser);
-    setMapping(['status', 'estado', 'Status'], statusForPriority);
-    setMapping(['last_action', 'accion', 'LastAction'], nextAction);
+    
+    // Explicitly inherit owner from the previous task to ensure persistence
+    const currentOwner = (prevItem.owner_id && prevItem.owner_id !== 'All') ? prevItem.owner_id : (currentUser === 'All' ? 'Juanjo' : currentUser);
+    setMapping(['owner_id', 'owner', 'operador', 'assigned_to'], currentOwner);
+    
+    setMapping(['client_status', 'status', 'estado', 'Status'], statusForPriority);
+    setMapping(['last_activity', 'last_action', 'accion', 'LastAction'], nextAction);
     setMapping(['priority', 'prioridad', 'Priority'], nextPriority);
-    setMapping(['actions date', 'action_date', 'fecha_accion'], nextDate);
+    setMapping(['next_action_date', 'actions date', 'action_date', 'fecha_accion'], nextDate);
     setMapping(['last_contact_date', 'fecha_contacto', 'last_contact'], now);
-    setMapping(['samples', 'muestras', 'Samples'], prevItem.samples);
+    setMapping(['samples_sent', 'samples', 'muestras', 'Samples'], prevItem.samples_sent);
     
     // Columnas físicas detectadas
     setMapping(['company', 'Empresa'], clientCompany);
@@ -823,14 +875,26 @@ export default function App() {
 
       // 2. Actualizar el status del cliente en la tabla 'clients'
       if (newStatus) {
-        await supabase.from('clients').update({ client_status: newStatus }).eq('id', prevItem.client_id);
+        const clientIdCol = clients.length > 0 && Object.keys(clients[0]).includes('client_id') ? 'client_id' : 'id';
+        await supabase.from('clients').update({ client_status: newStatus }).eq(clientIdCol, prevItem.client_id);
       }
 
       // 3. Insertar el nuevo registro como 'Pending'
       const { error } = await supabase.from('pipeline').insert([payload]);
       if (error) throw error;
       
-      addHistoryEntry(prevItem.client_id, 'note', `Tarea Completada. Siguiente paso: ${nextAction} (Prioridad Auto: ${nextPriority})`, comments);
+      // Guardar log detallado en client_history
+      addHistoryEntry(
+        prevItem.client_id, 
+        'note', 
+        nextAction, // La acción realizada
+        comments, // Las notas detalladas
+        { 
+          status: statusForPriority,
+          prev_action: prevItem.last_activity || ''
+        }
+      );
+
       setTaskToAccomplish(null);
       setAccomplishDate('');
       fetchClients();
@@ -844,23 +908,62 @@ export default function App() {
     }
   };
 
+  const handleEditTask = async (id: string | number, clientId: string | number, updates: { last_activity: string, status: PipelineStatus, notes: string }) => {
+    const priority = calculatePriority(updates.status, updates.last_activity);
+    
+    try {
+      // 1. Actualizar el registro en 'pipeline'
+      const pipelineUpdates: any = {
+        last_activity: updates.last_activity,
+        client_status: updates.status,
+        priority: priority,
+        notes: updates.notes
+      };
+
+      // Handle potential column variations
+      if (pipelineColumns.includes('last_action')) pipelineUpdates.last_action = updates.last_activity;
+      if (pipelineColumns.includes('status')) pipelineUpdates.status = updates.status;
+
+      const { error: pipeError } = await supabase.from('pipeline').update(pipelineUpdates).eq('id', id);
+
+      if (pipeError) throw pipeError;
+
+      // 2. Sincronizar el status del cliente en la tabla 'clients'
+      const clientIdCol = clients.length > 0 && Object.keys(clients[0]).includes('client_id') ? 'client_id' : 'id';
+      const clientUpdates: any = { client_status: updates.status };
+      if (clients.length > 0 && Object.keys(clients[0]).includes('status')) clientUpdates.status = updates.status;
+
+      const { error: clientError } = await supabase.from('clients').update(clientUpdates).eq(clientIdCol, clientId);
+
+      if (clientError) throw clientError;
+
+      addHistoryEntry(clientId, 'note', `Registro editado manualmente. Nuevo status: ${updates.status}, Acción: ${updates.last_activity}, Prioridad: ${priority}`, updates.notes);
+      
+      setEditingItem(null);
+      fetchClients();
+    } catch (err: any) {
+      console.error("Error updating task:", err);
+      alert("Error saving changes. Please try again.");
+    }
+  };
+
   const handleStartFollowup = async (client: Client, selectedOwner: string) => {
     if (!supabase) {
-      alert(`Seguimiento iniciado para ${client.company} asignado a ${selectedOwner} (Modo Demo)`);
+      alert(`Seguimiento iniciado para ${client.company_name} asignado a ${selectedOwner} (Modo Demo)`);
       // Update local state for demo
       const entryId = Date.now();
       setPipeline(prev => [...prev, { 
-        client_id: client.id, 
+        client_id: client.client_id, 
         id: entryId, 
-        owner: selectedOwner as any,
-        status: 'Pending',
-        last_action: 'Seguimiento iniciado',
+        owner_id: selectedOwner as any,
+        client_status: 'Pending',
+        last_activity: 'Seguimiento iniciado',
         priority: 'High',
-        action_date: calculateActionDate('High'),
+        next_action_date: calculateActionDate('High'),
         last_contact_date: new Date().toISOString(),
-        samples: '-',
-        company: client.company
-      }]);
+        samples_sent: '-',
+        company_name: client.company_name
+      } as any]);
       setAssigningClient(null);
       setAssigningOwner('');
       setShowAssignConfirm(false);
@@ -880,22 +983,22 @@ export default function App() {
       else if (cols.length === 0) payload[candidates[0]] = value;
     };
 
-    setMapping(['client_id', 'id_cliente', 'cliente_id', 'ID_CLIENTE'], client.id);
-    setMapping(['owner', 'operador', 'assigned_to'], selectedOwner);
-    setMapping(['status', 'estado', 'Status'], 'Pending');
-    setMapping(['last_action', 'accion', 'LastAction'], 'Seguimiento iniciado');
+    setMapping(['client_id', 'id_cliente', 'cliente_id', 'ID_CLIENTE'], client.client_id);
+    setMapping(['owner_id', 'owner', 'operador', 'assigned_to'], selectedOwner);
+    setMapping(['client_status', 'status', 'estado', 'Status'], 'Pending');
+    setMapping(['last_activity', 'last_action', 'accion', 'LastAction'], 'Seguimiento iniciado');
     setMapping(['priority', 'prioridad', 'Priority'], 'High');
-    setMapping(['actions date', 'action_date', 'fecha_accion'], calculateActionDate('High'));
+    setMapping(['next_action_date', 'actions date', 'action_date', 'fecha_accion'], calculateActionDate('High'));
     setMapping(['last_contact_date', 'fecha_contacto', 'last_contact'], new Date().toISOString());
-    setMapping(['samples', 'muestras', 'Samples'], '-');
-    setMapping(['company'], client.company);
-    setMapping(['action status', 'action_status'], 'Pending');
+    setMapping(['samples_sent', 'samples', 'muestras', 'Samples'], '-');
+    setMapping(['company_name', 'company'], client.company_name);
+    setMapping(['action_status', 'action status'], 'Pending');
 
     try {
       const { error } = await supabase.from('pipeline').insert([payload]);
       if (error) throw error;
       
-      addHistoryEntry(client.id, 'note', `Seguimiento académico iniciado por ${selectedOwner}`);
+      addHistoryEntry(client.client_id, 'note', `Seguimiento académico iniciado por ${selectedOwner}`);
       setAssigningClient(null);
       setAssigningOwner('');
       setShowAssignConfirm(false);
@@ -923,8 +1026,16 @@ export default function App() {
       reader.readAsDataURL(file);
       const base64Data = await base64Promise;
 
-      const apiKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || (process.env as any).GEMINI_API_KEY;
-      if (!apiKey) throw new Error("An API Key must be set (VITE_GEMINI_API_KEY)");
+      // Try multiple ways to get the API key (platform standard, Vite standard, and global process)
+      const apiKey = 
+        (typeof process !== 'undefined' ? process.env?.GEMINI_API_KEY : null) || 
+        (import.meta as any).env?.VITE_GEMINI_API_KEY ||
+        (import.meta as any).env?.GEMINI_API_KEY;
+
+      if (!apiKey) {
+        throw new Error("Gemini API Key is missing. Please ensure GEMINI_API_KEY is set in your environment.");
+      }
+
       const ai = new GoogleGenAI({ apiKey });
       
       const response = await ai.models.generateContent({
@@ -966,23 +1077,28 @@ export default function App() {
         }
       });
 
+      if (!response.text) {
+        throw new Error("No text extracted from the card.");
+      }
+
+      console.log("Extraction successful:", response.text);
       const extracted = JSON.parse(response.text);
       
       // Pre-rellenar formulario manteniendo lo que ya esté si no se encontró nada nuevo
       setNewClientForm(prev => ({
         ...prev,
-        company: extracted.company || prev.company,
+        company_name: extracted.company || prev.company_name,
         contact_name: extracted.contact_name || prev.contact_name,
         email: extracted.email || prev.email,
         phone: extracted.phone || prev.phone,
         mobile: extracted.mobile || prev.mobile,
-        address: extracted.address || prev.address
+        address_line_1: extracted.address || prev.address_line_1
       }));
 
-      alert("Scan completed. Please review the extracted data.");
-    } catch (err) {
+      alert("Scan completed successfully. Please review the extracted data.");
+    } catch (err: any) {
       console.error("Error scanning card:", err);
-      alert("Error scanning card. Try again or fill manually.");
+      alert(`Error scanning card: ${err.message || 'Unknown error'}. Please fill details manually.`);
     } finally {
       setIsScanning(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -1016,7 +1132,7 @@ export default function App() {
       
       setNewClientForm(prev => ({
         ...prev,
-        description: transcript
+        notes: transcript
       }));
     };
 
@@ -1060,18 +1176,18 @@ export default function App() {
 
     // Filtro crítico: Solo acciones PENDING o POSTPONE
     filtered = filtered.filter(p => {
-      const status = String(p['action status'] || p.action_status || '').toLowerCase().trim();
+      const status = String(p.action_status || p['action status'] || '').toLowerCase().trim();
       // Si no tiene status, asumimos Pending (retrocompatibilidad)
-      return status === 'pending' || status === 'postpone' || status === '';
+      return status === 'pending' || status === 'postpone' || status === 'postponed' || status === '';
     });
 
     if (currentUser === 'All') {
       filtered = filtered.filter(p => 
-        ['juanjo', 'alejandro'].includes(String(p.owner || '').toLowerCase().trim())
+        ['juanjo', 'alejandro'].includes(String(p.owner_id || '').toLowerCase().trim())
       );
     } else if (currentUser !== 'Orbe Admin') {
       filtered = filtered.filter(p => 
-        String(p.owner || '').toLowerCase().trim() === currentUser.toLowerCase().trim()
+        String(p.owner_id || '').toLowerCase().trim() === currentUser.toLowerCase().trim()
       );
     }
 
@@ -1079,7 +1195,7 @@ export default function App() {
     if (searchTerm) {
       const search = searchTerm.toLowerCase();
       filtered = filtered.filter(p => 
-        (p.company?.toLowerCase() || '').includes(search)
+        (p.company_name?.toLowerCase() || '').includes(search)
       );
     }
 
@@ -1089,7 +1205,7 @@ export default function App() {
     
     filtered.forEach(item => {
       const clientId = String(item.client_id);
-      const currentActionDate = item.action_date;
+      const currentActionDate = item.next_action_date;
       
       const parseDateVal = (d: string) => {
         const parsed = parseFlexibleDate(d);
@@ -1101,7 +1217,7 @@ export default function App() {
       } else {
         const existing = clientMap.get(clientId)!;
         // Priorizar la más antigua (más urgente) si hay duplicados pendientes
-        if (parseDateVal(currentActionDate) < parseDateVal(existing.action_date)) {
+        if (parseDateVal(currentActionDate) < parseDateVal(existing.next_action_date)) {
           clientMap.set(clientId, item);
         }
       }
@@ -1119,36 +1235,46 @@ export default function App() {
       });
     }
 
-    // 5. Ordenar: 1º Prioridad (Urgent -> Low), 2º Action Date (Cercano primero)
+    // 5. Ordenar según selección
     const sortedResult = finalItems.sort((a, b) => {
-      const priorityWeightA = PRIORITIES[a.priority as Priority] || 999;
-      const priorityWeightB = PRIORITIES[b.priority as Priority] || 999;
-      
-      if (priorityWeightA !== priorityWeightB) {
-        return priorityWeightA - priorityWeightB;
-      }
-
-      const parseDate = (d: string) => {
-        if (!d) return 0;
-        if (d.includes('/') && !d.includes('T')) {
-          const parts = d.split('/');
-          return new Date(parseInt(parts[2].length === 2 ? '20' + parts[2] : parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0])).getTime();
-        }
-        return new Date(d.replace(' ', 'T')).getTime();
+      const parseDateVal = (d: string) => {
+        const parsed = parseFlexibleDate(d);
+        return parsed ? parsed.getTime() : 0;
       };
 
-      const dateA = parseDate(a.action_date);
-      const dateB = parseDate(b.action_date);
-      return dateA - dateB;
+      if (sortBy === 'priority') {
+        const weightA = PRIORITIES[a.priority as Priority] || 999;
+        const weightB = PRIORITIES[b.priority as Priority] || 999;
+        if (weightA !== weightB) return weightA - weightB;
+        return parseDateVal(a.next_action_date) - parseDateVal(b.next_action_date);
+      }
+
+      if (sortBy === 'action_date') {
+        const tA = parseDateVal(a.next_action_date);
+        const tB = parseDateVal(b.next_action_date);
+        if (tA !== tB) return tA - tB;
+        const wA = PRIORITIES[a.priority as Priority] || 999;
+        const wB = PRIORITIES[b.priority as Priority] || 999;
+        return wA - wB;
+      }
+
+      if (sortBy === 'last_contact') {
+        const tA = parseDateVal(a.last_contact_date);
+        const tB = parseDateVal(b.last_contact_date);
+        // Reciente arriba
+        return tB - tA || (PRIORITIES[a.priority as Priority] - PRIORITIES[b.priority as Priority]);
+      }
+
+      return 0;
     });
 
     return sortedResult;
-  }, [pipeline, currentUser, searchTerm, statusFilter]);
+  }, [pipeline, currentUser, searchTerm, statusFilter, sortBy]);
 
   const filteredClients = useMemo(() => {
     let result = clients.filter(c => 
-      (c.company?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
-      (c.contact_person?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+      (c.company_name?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
+      (c.contact_name?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
       (c.email?.toLowerCase() || '').includes(searchTerm.toLowerCase())
     );
 
@@ -1164,7 +1290,7 @@ export default function App() {
 
     // Apply alphabetical sort by company as default
     return result.sort((a, b) => 
-      (a.company || '').localeCompare(b.company || '')
+      (a.company_name || '').localeCompare(b.company_name || '')
     );
   }, [clients, searchTerm, assignmentFilter, statusFilter, pipeline]);
 
@@ -1323,7 +1449,7 @@ export default function App() {
                   {item.icon}
                 </div>
                 <span className="font-medium text-sm">{item.label}</span>
-                {item.id === 'control' && pipeline.some(p => (p.owner === currentUser || (currentUser === 'All' && ['juanjo', 'alejandro'].includes(String(p.owner || '').toLowerCase().trim()))) && new Date(p.action_date) < new Date()) && (
+                {item.id === 'control' && pipeline.some(p => (p.owner_id === currentUser || (currentUser === 'All' && ['juanjo', 'alejandro'].includes(String(p.owner_id || '').toLowerCase().trim()))) && new Date(p.next_action_date) < new Date()) && (
                   <div className="absolute right-3 w-2 h-2 bg-orbe-overdue rounded-full animate-ping"></div>
                 )}
               </button>
@@ -1385,7 +1511,7 @@ export default function App() {
                       <Briefcase size={32} />
                     </div>
                     <h3 className="text-2xl font-black text-orbe-green text-center mb-2 leading-tight">MÓDULO DE ASIGNACIÓN</h3>
-                    <p className="text-gray-400 text-sm text-center mb-8 font-medium">¿Quién es el responsable de esta cuenta?<br/><span className="text-orbe-green font-bold">{assigningClient.company}</span></p>
+                    <p className="text-gray-400 text-sm text-center mb-8 font-medium">¿Quién es el responsable de esta cuenta?<br/><span className="text-orbe-green font-bold">{assigningClient.company_name}</span></p>
                     
                     <div className="grid grid-cols-2 gap-4 mb-8">
                       {['Alejandro', 'Juanjo'].map(name => (
@@ -1589,7 +1715,7 @@ export default function App() {
         </header>
 
         <section className="flex-1 flex flex-col min-h-0 animate-in fade-in slide-in-from-bottom-2 duration-500">
-          <AnimatePresence mode="wait">
+          <AnimatePresence>
             {view === 'new' && (
               <motion.div 
                 key="new-view"
@@ -1611,17 +1737,17 @@ export default function App() {
                   <form onSubmit={async (e) => {
                     e.preventDefault();
                     
-                    const company = (newClientForm.company || '').trim();
+                    const companyName = (newClientForm.company_name || '').trim();
                     const email = (newClientForm.email || '').trim();
                     const phone = (newClientForm.phone || '').trim();
 
                     // Calcular siguiente ID manual (ya que la tabla parece no tener auto-incremento)
                     const nextId = clients.length > 0 
-                      ? Math.max(...clients.map(c => Number(c.id) || 0)) + 1 
+                      ? Math.max(...clients.map(c => Number(c.client_id) || 0)) + 1 
                       : 1;
 
                     // Validación de requisitos indispensables
-                    if (!company) {
+                    if (!companyName) {
                       alert('Company name is required.');
                       return;
                     }
@@ -1631,21 +1757,21 @@ export default function App() {
                     }
 
                     const payload: any = {
-                      ID: nextId,
-                      Company: company,
-                      "Contact name": newClientForm.contact_name || '',
-                      "Lead Name": newClientForm.contact_name || '',
-                      "Correo electrónico": email,
-                      "Teléfono": phone,
-                      "Móvil": newClientForm.mobile || '',
-                      "Adress": newClientForm.address || '',
-                      "Descripción": newClientForm.description || '',
+                      client_id: nextId,
+                      company_name: companyName,
+                      contact_name: newClientForm.contact_name || '',
+                      lead_name: newClientForm.contact_name || '',
+                      email: email,
+                      phone: phone,
+                      mobile: newClientForm.mobile || '',
+                      address_line_1: newClientForm.address_line_1 || '',
+                      notes: newClientForm.notes || '',
                       client_status: 'Potential client'
                     };
 
                     if (!supabase) {
                       const newId = clients.length + 1;
-                      setClients(prev => [...prev, { id: newId, ...payload } as any]);
+                      setClients(prev => [...prev, { client_id: newId, ...payload } as any]);
                       alert('Demo Mode: Client saved locally');
                       setView('database');
                       return;
@@ -1656,13 +1782,13 @@ export default function App() {
                       const { data: existingRecords, error: checkError } = await supabase
                         .from('clients')
                         .select('*')
-                        .eq('Company', payload.Company);
+                        .eq('company_name', payload.company_name);
                       
                       if (checkError) throw checkError;
                       
                       if (existingRecords && existingRecords.length > 0) {
                         const existing = existingRecords[0];
-                        const foundId = existing.id || existing.ID || existing.n || existing.N || '?';
+                        const foundId = existing.client_id || existing.id || existing.ID || existing.n || existing.N || '?';
                         alert(`User already exists, check ID: ${foundId}`);
                         return;
                       }
@@ -1671,7 +1797,7 @@ export default function App() {
                       if (error) throw error;
                       
                       if (inserted && inserted[0]) {
-                        addHistoryEntry(inserted[0].id, 'system', 'Client registered in system');
+                        addHistoryEntry(inserted[0].client_id || inserted[0].id, 'system', 'Client registered in system');
                       }
 
                       alert('Client successfully registered in database');
@@ -1724,8 +1850,8 @@ export default function App() {
                       <div className="col-span-2">
                         <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Company Name <span className="text-red-400">*</span></label>
                         <input 
-                          value={newClientForm.company}
-                          onChange={e => setNewClientForm({...newClientForm, company: e.target.value})}
+                          value={newClientForm.company_name}
+                          onChange={e => setNewClientForm({...newClientForm, company_name: e.target.value})}
                           className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-lg focus:ring-2 ring-orbe-green/10 outline-none transition-all font-semibold text-orbe-green" 
                           placeholder="Company name..." 
                         />
@@ -1770,8 +1896,8 @@ export default function App() {
                       <div className="col-span-2">
                         <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Commercial Address</label>
                         <input 
-                          value={newClientForm.address}
-                          onChange={e => setNewClientForm({...newClientForm, address: e.target.value})}
+                          value={newClientForm.address_line_1}
+                          onChange={e => setNewClientForm({...newClientForm, address_line_1: e.target.value})}
                           className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-lg focus:ring-2 ring-orbe-green/10 outline-none transition-all" 
                         />
                       </div>
@@ -1797,8 +1923,8 @@ export default function App() {
                           </button>
                         </div>
                         <textarea 
-                          value={newClientForm.description}
-                          onChange={e => setNewClientForm({...newClientForm, description: e.target.value})}
+                          value={newClientForm.notes}
+                          onChange={e => setNewClientForm({...newClientForm, notes: e.target.value})}
                           rows={3} 
                           className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-lg focus:ring-2 ring-orbe-green/10 outline-none transition-all resize-none" 
                           placeholder={isListening ? "Speak now..." : "Add relevant details..."} 
@@ -1832,6 +1958,20 @@ export default function App() {
                     />
                   </div>
                   <div className="flex gap-2">
+                    <div className="flex-1 flex items-center gap-3 bg-orbe-green border border-orbe-green px-4 py-2 rounded-xl shadow-lg shadow-orbe-green/20 transition-all">
+                      <ArrowUpDown size={14} className="text-white opacity-70" />
+                      <span className="text-[9px] font-black text-white/60 uppercase tracking-widest border-r border-white/20 pr-3 hidden md:inline">Order by:</span>
+                      <select 
+                        value={sortBy} 
+                        onChange={(e) => setSortBy(e.target.value as any)}
+                        className="flex-1 md:flex-none text-[10px] font-black text-white uppercase tracking-wider outline-none bg-transparent cursor-pointer"
+                      >
+                        <option value="priority" className="bg-orbe-green text-white">PRIORITY</option>
+                        <option value="action_date" className="bg-orbe-green text-white">ACTION DATE</option>
+                        <option value="last_contact" className="bg-orbe-green text-white">LAST CONTACT</option>
+                      </select>
+                    </div>
+
                     <div className="flex-1 flex items-center gap-3 bg-orbe-green border border-orbe-green px-4 py-2 rounded-xl shadow-lg shadow-orbe-green/20 transition-all">
                       <Users size={14} className="text-white opacity-70" />
                       <span className="text-[9px] font-black text-white/60 uppercase tracking-widest border-r border-white/20 pr-3 hidden md:inline">Owner:</span>
@@ -1893,20 +2033,20 @@ export default function App() {
                           <tr key={item.id} className="hover:bg-orbe-cream/30 transition-colors">
                             <td className="p-2 font-mono text-[10px] text-gray-400">#{item.client_id}</td>
                             <td className="px-3 py-2">
-                              <div className="font-bold text-orbe-green">{item.company}</div>
+                              <div className="font-bold text-orbe-green">{item.company_name}</div>
                             </td>
                             <td className="px-3 py-2">
                               <div className="flex items-center gap-2">
                                 <UserCircle size={14} className="text-orbe-tan" />
-                                <span className="font-semibold text-gray-600">{item.owner}</span>
+                                <span className="font-semibold text-gray-600">{item.owner_id}</span>
                               </div>
                             </td>
                             <td className="px-3 py-2">
                               <div className="flex flex-col gap-1">
                                 <span className="font-mono font-bold text-orbe-green/70 text-[11px]">
-                                  {formatDateSafe(item.action_date).toUpperCase()}
+                                  {formatDateSafe(item.next_action_date).toUpperCase()}
                                 </span>
-                                {getStatusBadge(item.action_date)}
+                                {getStatusBadge(item.next_action_date)}
                               </div>
                             </td>
                             <td className="px-3 py-2">
@@ -1935,8 +2075,8 @@ export default function App() {
                             </td>
                             <td className="p-5 text-gray-500 italic min-w-[250px]">
                               <input 
-                                defaultValue={item.last_action}
-                                onBlur={(e) => handleUpdatePipeline(item.id, { last_action: e.target.value })}
+                                defaultValue={item.last_activity}
+                                 onBlur={(e) => handleUpdatePipeline(item.id, { last_activity: e.target.value })}
                                 className="bg-transparent w-full outline-none text-xs"
                                 placeholder="Action note..."
                               />
@@ -1947,7 +2087,7 @@ export default function App() {
                                    ? 'bg-amber-100 text-amber-700 border border-amber-200' 
                                    : 'bg-blue-50 text-blue-700 border border-blue-100'
                                }`}>
-                                 {String(item.action_status).toLowerCase() === 'postpone' ? 'Postponed' : (item.action_status || 'Pending')}
+                                  {(String(item.action_status).toLowerCase() === 'postpone' || String(item.action_status).toLowerCase() === 'postponed') ? 'Postponed' : (item.action_status || 'Pending')}
                                </span>
                              </td>
                               <td className="p-3 text-center">
@@ -1963,7 +2103,7 @@ export default function App() {
                               </td>
                             <td className="p-3 text-center">
                               <button 
-                                onClick={() => setSelectedClientForHistory(clients.find(c => String(c.id) === String(item.client_id)) || null)}
+                                onClick={() => setSelectedClientForHistory(clients.find(c => String(c.client_id) === String(item.client_id)) || null)}
                                 className="p-2 bg-orbe-tan/10 text-orbe-green rounded-lg hover:bg-orbe-tan/30 transition-all shadow-sm"
                                 title="Interaction Log"
                               >
@@ -1973,7 +2113,12 @@ export default function App() {
                             <td className="p-5 text-center">
                               <div className="flex items-center justify-center gap-2">
                                 <button 
-                                  onClick={() => setTaskToAccomplish(item)}
+                                  onClick={() => {
+                                    setAccomplishDate('');
+                                    setAccomplishAction('');
+                                    setModalError(null);
+                                    setTaskToAccomplish(item);
+                                  }}
                                   className="p-2 bg-orbe-green/10 text-orbe-green rounded-lg hover:bg-orbe-green hover:text-white transition-all shadow-sm flex items-center gap-1 group"
                                   title="Task Accomplished"
                                 >
@@ -1981,12 +2126,26 @@ export default function App() {
                                   <span className="text-[9px] font-black uppercase">Close</span>
                                 </button>
                                 <button 
-                                  onClick={() => setPostponeItem(item)}
+                                  onClick={() => {
+                                    setModalError(null);
+                                    setPostponeItem(item);
+                                  }}
                                   className="p-2 bg-orbe-tan/10 text-orbe-green rounded-lg hover:bg-orbe-green hover:text-white transition-all shadow-sm flex items-center gap-1 group"
                                   title="Postpone Action"
                                 >
                                   <Calendar size={14} className="group-hover:scale-110" />
                                   <span className="text-[9px] font-black uppercase">Postpone</span>
+                                </button>
+                                <button 
+                                  onClick={() => {
+                                    setModalError(null);
+                                    setEditingItem(item);
+                                  }}
+                                  className="p-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-600 hover:text-white transition-all shadow-sm flex items-center gap-1 group"
+                                  title="Edit Entry"
+                                >
+                                  <Edit2 size={14} className="group-hover:scale-110" />
+                                  <span className="text-[9px] font-black uppercase">Edit</span>
                                 </button>
                               </div>
                             </td>
@@ -2008,9 +2167,9 @@ export default function App() {
                           <div className="p-4 flex flex-col gap-3">
                             <div className="flex justify-between items-start">
                               <div>
-                                <h4 className="font-black text-orbe-green text-lg leading-tight uppercase tracking-tight">{item.company}</h4>
+                                <h4 className="font-black text-orbe-green text-lg leading-tight uppercase tracking-tight">{item.company_name}</h4>
                                 <div className="flex items-center gap-2 mt-1 text-gray-400 text-[10px] uppercase font-bold tracking-widest">
-                                  <UserCircle size={10} /> {item.owner} | #{item.client_id}
+                                  <UserCircle size={10} /> {item.owner_id} | #{item.client_id}
                                 </div>
                               </div>
                               <div className={`px-3 py-1 rounded-full font-black text-[9px] uppercase tracking-tighter border ${
@@ -2029,8 +2188,8 @@ export default function App() {
                                   <span className="text-xs font-black uppercase tracking-tight">Action Date</span>
                                 </div>
                                 <div className="flex flex-col items-end">
-                                  <span className="font-mono font-black text-orbe-green text-sm">{formatDateSafe(item.action_date).toUpperCase()}</span>
-                                  {isOverdue(item.action_date) && <span className="text-[9px] font-black text-red-500 uppercase tracking-tighter animate-pulse">🔴 Overdue</span>}
+                                  <span className="font-mono font-black text-orbe-green text-sm">{formatDateSafe(item.next_action_date).toUpperCase()}</span>
+                                  {isOverdue(item.next_action_date) && <span className="text-[9px] font-black text-red-500 uppercase tracking-tighter animate-pulse">🔴 Overdue</span>}
                                 </div>
                               </div>
                               <div className="h-px bg-orbe-tan/20 my-1" />
@@ -2040,7 +2199,7 @@ export default function App() {
                                 </div>
                                 <div>
                                   <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest leading-none">Last Action</p>
-                                  <p className="text-xs font-semibold text-gray-600 italic mt-1 leading-snug">"{item.last_action || 'No recent notes'}"</p>
+                                  <p className="text-xs font-semibold text-gray-600 italic mt-1 leading-snug">"{item.last_activity || 'No recent notes'}"</p>
                                 </div>
                               </div>
                             </div>
@@ -2048,16 +2207,33 @@ export default function App() {
 
                           <div className="flex border-t border-orbe-tan/30 h-14">
                             <button 
-                              onClick={() => setTaskToAccomplish(item)}
+                              onClick={() => {
+                                setAccomplishDate('');
+                                setAccomplishAction('');
+                                setModalError(null);
+                                setTaskToAccomplish(item);
+                              }}
                               className="flex-1 bg-orbe-green text-white font-black text-[10px] uppercase tracking-[0.2em] flex items-center justify-center gap-3 active:opacity-80 transition-all border-r border-white/10"
                             >
                               <CheckCircle size={18} /> Close
                             </button>
                             <button 
-                              onClick={() => setPostponeItem(item)}
-                              className="flex-1 bg-orbe-tan/20 text-orbe-green font-black text-[10px] uppercase tracking-[0.2em] flex items-center justify-center gap-3 active:bg-orbe-tan/40 transition-all"
+                              onClick={() => {
+                                setModalError(null);
+                                setPostponeItem(item);
+                              }}
+                              className="flex-1 bg-orbe-tan/20 text-orbe-green font-black text-[10px] uppercase tracking-[0.2em] flex items-center justify-center gap-3 active:bg-orbe-tan/40 transition-all border-r border-orbe-tan/10"
                             >
                               <Calendar size={18} /> Postpone
+                            </button>
+                            <button 
+                              onClick={() => {
+                                setModalError(null);
+                                setEditingItem(item);
+                              }}
+                              className="flex-1 bg-blue-50 text-blue-600 font-black text-[10px] uppercase tracking-[0.2em] flex items-center justify-center gap-3 active:bg-blue-100 transition-all"
+                            >
+                              <Edit2 size={18} /> Edit
                             </button>
                           </div>
                         </div>
@@ -2107,7 +2283,7 @@ export default function App() {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       {['Juanjo', 'Alejandro'].map((owner) => {
                         const ownerTasks = pipeline.filter(p => 
-                          String(p.owner || '').toLowerCase().trim() === owner.toLowerCase() && 
+                          String(p.owner_id || '').toLowerCase().trim() === owner.toLowerCase() && 
                           String(p.action_status || '').trim().toLowerCase() !== 'done'
                         ).sort((a, b) => {
                           const wA = PRIORITIES[a.priority as Priority] || 999;
@@ -2146,13 +2322,14 @@ export default function App() {
                                     ownerTasks.map(item => (
                                       <tr key={`prio-row-${item.id}`} className="hover:bg-orbe-cream/20 transition-colors">
                                         <td className="p-3">
-                                          <div className="font-bold text-orbe-green">{item.company}</div>
+                                          <div className="font-bold text-orbe-green">{item.company_name}</div>
                                         </td>
                                         <td className="p-3 text-gray-500 italic">
-                                          {item.last_action}
+                                          {item.last_activity}
                                         </td>
                                         <td className="p-3">
                                           <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest ${
+                                            item.priority === 'Urgent' ? 'bg-red-50 text-red-600 border border-red-100' :
                                             item.priority === 'High' ? 'bg-red-50 text-red-600 border border-red-100' :
                                             item.priority === 'Medium' ? 'bg-orange-50 text-orange-600 border border-orange-100' :
                                             'bg-blue-50 text-blue-600 border border-blue-100'
@@ -2181,167 +2358,392 @@ export default function App() {
                 )}
 
                 {dashboardTab === 'overview' && (
-                  <div className="space-y-8 animate-in fade-in duration-300">
-                    {/* 1. SECCIÓN VISUAL - MÉTRICAS CRÍTICAS COMPACTAS */}
-                <div className="grid grid-cols-3 gap-2">
-                  {/* Total Overdue */}
-                  <div className="bg-white p-2 md:p-3 rounded-lg border border-orbe-tan/30 shadow-sm flex flex-col items-center md:items-start justify-center gap-1">
-                    <div className="flex items-center gap-2">
-                      <div className="p-1.5 md:p-2 bg-red-50 text-red-500 rounded-lg">
-                        <Clock size={16} />
-                      </div>
-                      <span className="hidden md:inline text-[8px] font-black text-red-500 bg-red-50 px-1.5 py-0.5 rounded uppercase tracking-widest">Red Alert</span>
-                    </div>
-                    <div className="text-center md:text-left">
-                      <h3 className="text-lg md:text-xl font-black text-orbe-green leading-none">
-                        {pipeline.filter(p => isOverdue(p.action_date) && String(p.action_status || '').trim().toLowerCase() !== 'done').length}
-                      </h3>
-                      <p className="text-[7px] md:text-[9px] font-bold text-gray-400 uppercase tracking-widest mt-0.5">Overdue</p>
-                    </div>
-                  </div>
-
-                  {/* Unassigned Potentials */}
-                  <div className="bg-white p-2 md:p-3 rounded-lg border border-orbe-tan/30 shadow-sm flex flex-col items-center md:items-start justify-center gap-1">
-                    <div className="flex items-center gap-2">
-                      <div className="p-1.5 md:p-2 bg-orbe-tan/10 text-orbe-tan rounded-lg">
-                        <Users size={16} />
-                      </div>
-                      <span className="hidden md:inline text-[8px] font-black text-orbe-tan bg-orbe-tan/10 px-1.5 py-0.5 rounded uppercase tracking-widest text-opacity-70">Pending</span>
-                    </div>
-                    <div className="text-center md:text-left">
-                      <h3 className="text-lg md:text-xl font-black text-orbe-green leading-none">
-                        {clients.length - assignedClientIds.size}
-                      </h3>
-                      <p className="text-[7px] md:text-[9px] font-bold text-gray-400 uppercase tracking-widest mt-0.5">Unassigned</p>
-                    </div>
-                  </div>
-
-                  {/* Follow-ups in Progress */}
-                  <div className="bg-white p-2 md:p-3 rounded-lg border border-orbe-tan/30 shadow-sm flex flex-col items-center md:items-start justify-center gap-1">
-                    <div className="flex items-center gap-2">
-                      <div className="p-1.5 md:p-2 bg-orange-50 text-orange-500 rounded-lg">
-                        <Database size={16} />
-                      </div>
-                      <span className="hidden md:inline text-[8px] font-black text-orange-500 bg-orange-50 px-1.5 py-0.5 rounded uppercase tracking-widest">Follow-up</span>
-                    </div>
-                    <div className="text-center md:text-left">
-                      <h3 className="text-lg md:text-xl font-black text-orbe-green leading-none">
-                        {pipeline.filter(p => String(p.action_status || '').trim().toLowerCase() !== 'done').length}
-                      </h3>
-                      <p className="text-[7px] md:text-[9px] font-bold text-gray-400 uppercase tracking-widest mt-0.5">Active</p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* 2. SECCIÓN MÓVIL: URGENCIAS DEL VENDEDOR */}
-                <div className="md:hidden flex-1 flex flex-col gap-4">
-                  <div className="flex items-center justify-between px-2">
-                    <h4 className="text-xl font-black text-orbe-green uppercase tracking-tighter">My Pending Tasks</h4>
-                    <span className="text-[10px] font-black bg-orbe-green text-white px-3 py-1 rounded-full uppercase tracking-widest tracking-tight">Active: {pipeline.filter(p => (p.owner === currentUser || (currentUser === 'All' && ['juanjo', 'alejandro'].includes(String(p.owner || '').toLowerCase().trim()))) && String(p.action_status || '').trim().toLowerCase() !== 'done').length}</span>
-                  </div>
-                  
-                  <div className="flex-1 space-y-3 pb-20">
-                    {pipeline
-                      .filter(p => (p.owner === currentUser || (currentUser === 'All' && ['juanjo', 'alejandro'].includes(String(p.owner || '').toLowerCase().trim()))) && String(p.action_status || '').trim().toLowerCase() !== 'done')
-                      .sort((a, b) => new Date(a.action_date).getTime() - new Date(b.action_date).getTime())
-                      .map(item => (
-                        <button 
-                          key={`dash-mob-${item.id}`}
-                          onClick={() => {
-                            setSearchTerm(item.company);
-                            setView('pipeline');
-                          }}
-                          className={`w-full text-left bg-white p-4 rounded-2xl border flex items-center gap-4 transition-all active:scale-95 shadow-sm overflow-hidden relative group ${isOverdue(item.action_date) ? 'border-red-200' : 'border-orbe-tan/30'}`}
-                        >
-                          {isOverdue(item.action_date) && <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-red-500" />}
-                          <div className={`p-3 rounded-xl ${isOverdue(item.action_date) ? 'bg-red-50 text-red-500' : 'bg-orbe-green/5 text-orbe-green'}`}>
-                            {isOverdue(item.action_date) ? <AlertCircle size={20} /> : <Calendar size={20} />}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex justify-between items-start">
-                              <p className="font-black text-orbe-green text-sm truncate uppercase tracking-tight">{item.company}</p>
-                              <p className={`font-mono font-black text-[10px] ${isOverdue(item.action_date) ? 'text-red-600' : 'text-gray-400'}`}>{formatDateSafe(item.action_date).toUpperCase()}</p>
-                            </div>
-                            <p className="text-[10px] text-gray-400 italic truncate mt-0.5">"{item.last_action || 'No notes'}"</p>
-                          </div>
-                          <div className="text-orbe-tan group-active:translate-x-1 transition-transform">
-                            <ChevronRight size={18} />
-                          </div>
-                        </button>
-                      ))}
-                    {pipeline.filter(p => (p.owner === currentUser || (currentUser === 'All' && ['juanjo', 'alejandro'].includes(String(p.owner || '').toLowerCase().trim()))) && String(p.action_status || '').trim().toLowerCase() !== 'done').length === 0 && (
-                      <div className="py-20 text-center bg-green-50/30 rounded-3xl border-2 border-dashed border-green-200 flex flex-col items-center">
-                        <div className="w-16 h-16 bg-green-100 text-green-600 rounded-full flex items-center justify-center mb-4">
-                          <CheckCircle size={32} />
+                  <div className="space-y-8 animate-in fade-in duration-500 pb-20">
+                    {/* 1. SECCIÓN VISUAL - MÉTRICAS CRÍTICAS COMPACTAS CON TENDENCIA */}
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                      {/* Total Overdue */}
+                      <div className="bg-white p-5 rounded-2xl border border-orbe-tan/30 shadow-sm flex flex-col items-start justify-center gap-2 relative overflow-hidden group">
+                        <div className="absolute -right-2 -bottom-2 w-16 h-16 bg-red-50 rounded-full blur-xl group-hover:bg-red-100 transition-all" />
+                        <div className="p-2 bg-red-50 text-red-500 rounded-xl">
+                          <Clock size={16} />
                         </div>
-                        <p className="text-green-800 font-black text-lg uppercase tracking-tight">You're All Caught Up!</p>
-                        <p className="text-green-600/70 text-sm font-medium">No pending tasks for today.</p>
+                        <div>
+                          <h3 className="text-2xl font-black text-orbe-green leading-none">
+                            {pipeline.filter(p => isOverdue(p.next_action_date) && String(p.action_status || '').trim().toLowerCase() !== 'done').length}
+                          </h3>
+                          <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mt-1">Actions Overdue</p>
+                        </div>
                       </div>
-                    )}
+
+                      {/* Scheduled Today */}
+                      <div className="bg-white p-5 rounded-2xl border border-orbe-tan/30 shadow-sm flex flex-col items-start justify-center gap-2 relative overflow-hidden group">
+                        <div className="absolute -right-2 -bottom-2 w-16 h-16 bg-blue-50 rounded-full blur-xl group-hover:bg-blue-100 transition-all" />
+                        <div className="p-2 bg-blue-50 text-blue-500 rounded-xl">
+                          <Calendar size={16} />
+                        </div>
+                        <div>
+                          <h3 className="text-2xl font-black text-orbe-green leading-none">
+                            {pipeline.filter(p => {
+                              const date = parseFlexibleDate(p.next_action_date);
+                              if (!date) return false;
+                              const today = new Date();
+                              return date.getDate() === today.getDate() && date.getMonth() === today.getMonth() && date.getFullYear() === today.getFullYear() && String(p.action_status || '').trim().toLowerCase() !== 'done';
+                            }).length}
+                          </h3>
+                          <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mt-1">Actions Today</p>
+                        </div>
+                      </div>
+
+                      {/* Postponed (Last Week) */}
+                      <div className="bg-white p-5 rounded-2xl border border-orbe-tan/30 shadow-sm flex flex-col items-start justify-center gap-2 relative overflow-hidden group">
+                        <div className="absolute -right-2 -bottom-2 w-16 h-16 bg-amber-50 rounded-full blur-xl group-hover:bg-amber-100 transition-all" />
+                        <div className="p-2 bg-amber-50 text-amber-500 rounded-xl">
+                          <History size={16} />
+                        </div>
+                        <div>
+                          <h3 className="text-2xl font-black text-orbe-green leading-none">
+                            {pipeline.filter(p => {
+                              const d = parseFlexibleDate(p.updated_at || p.created_at);
+                              const limit = new Date();
+                              limit.setDate(limit.getDate() - 7);
+                              return d && d >= limit && (String(p.action_status || '').toLowerCase().includes('postpone'));
+                            }).length}
+                          </h3>
+                          <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mt-1">Recently Postponed</p>
+                        </div>
+                      </div>
+
+                      {/* High Priority Pending */}
+                      <div className="bg-white p-5 rounded-2xl border border-orbe-tan/30 shadow-sm flex flex-col items-start justify-center gap-2 relative overflow-hidden group">
+                        <div className="absolute -right-2 -bottom-2 w-16 h-16 bg-orbe-green/5 rounded-full blur-xl group-hover:bg-orbe-green/10 transition-all" />
+                        <div className="p-2 bg-orbe-green/10 text-orbe-green rounded-xl">
+                          <Star size={16} />
+                        </div>
+                        <div>
+                          <h3 className="text-2xl font-black text-orbe-green leading-none">
+                            {pipeline.filter(p => (p.priority === 'Urgent' || p.priority === 'High') && String(p.action_status || '').trim().toLowerCase() !== 'done').length}
+                          </h3>
+                          <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mt-1">Critical Tasks</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                      {/* TOP PRIORITIES TODAY */}
+                      <div className="bg-white rounded-3xl border border-orbe-tan/30 shadow-sm overflow-hidden flex flex-col">
+                        <div className="p-5 border-b border-orbe-tan/20 flex justify-between items-center bg-gray-50/50">
+                          <div>
+                            <h4 className="text-xs font-black text-orbe-green uppercase tracking-widest">Focus List: Today</h4>
+                            <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Immediate action required</p>
+                          </div>
+                          <Target size={18} className="text-red-500" />
+                        </div>
+                        <div className="divide-y divide-orbe-tan/10 overflow-y-auto max-h-[300px]">
+                          {pipeline
+                            .filter(p => {
+                              const d = parseFlexibleDate(p.next_action_date);
+                              const today = new Date();
+                              return d && d <= today && String(p.action_status || '').trim().toLowerCase() !== 'done';
+                            })
+                            .sort((a, b) => (PRIORITIES[a.priority as Priority] || 999) - (PRIORITIES[b.priority as Priority] || 999))
+                            .slice(0, 10)
+                            .map(item => (
+                              <div key={`prio-item-${item.id}`} className="p-4 hover:bg-orbe-cream/20 transition-all flex items-center justify-between group">
+                                <div className="flex items-center gap-3">
+                                  <div className={`w-1 h-8 rounded-full ${item.priority === 'Urgent' ? 'bg-red-500' : item.priority === 'High' ? 'bg-orange-500' : 'bg-blue-400'}`} />
+                                  <div>
+                                    <p className="font-bold text-orbe-green text-sm group-hover:translate-x-1 transition-transform">{item.company_name}</p>
+                                    <p className="text-[10px] text-gray-500 font-medium italic truncate max-w-[200px]">{item.last_activity}</p>
+                                  </div>
+                                </div>
+                                <div className="text-right">
+                                  <p className="text-[10px] font-black text-orbe-green uppercase tracking-tighter">{item.owner_id}</p>
+                                  <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded ${isOverdue(item.next_action_date) ? 'bg-red-500 text-white' : 'bg-gray-100 text-gray-400'}`}>
+                                    {isOverdue(item.next_action_date) ? 'Overdue' : 'Today'}
+                                  </span>
+                                </div>
+                              </div>
+                            ))}
+                          {pipeline.filter(p => {
+                            const d = parseFlexibleDate(p.next_action_date);
+                            const today = new Date();
+                            return d && d <= today && String(p.action_status || '').trim().toLowerCase() !== 'done';
+                          }).length === 0 && (
+                            <div className="p-10 text-center text-gray-400 italic text-sm">No tasks pending for today. Smooth day ahead!</div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* PIPELINE HEALTH & DISTRIBUTION */}
+                      <div className="bg-white rounded-3xl border border-orbe-tan/30 shadow-sm overflow-hidden flex flex-col p-6 space-y-6">
+                        <div>
+                          <h4 className="text-xs font-black text-orbe-green uppercase tracking-widest mb-1">Pipeline Health</h4>
+                          <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Efficiency & progress distribution</p>
+                        </div>
+                        
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="p-4 bg-[#F2F9F2] rounded-2xl border border-[#E0F2E0]">
+                            <p className="text-[9px] font-bold text-[#3D7A3C] uppercase tracking-widest mb-1">Conversion Potential</p>
+                            <h5 className="text-2xl font-black text-[#3D7A3C]">{pipeline.filter(p => p.status === 'Potential client').length}</h5>
+                            <p className="text-[8px] text-[#3D7A3C]/70 mt-1 italic">Active prospects awaiting follow-up</p>
+                          </div>
+                          <div className="p-4 bg-orange-50 rounded-2xl border border-orange-100">
+                            <p className="text-[9px] font-bold text-orange-600 uppercase tracking-widest mb-1">Active Deals</p>
+                            <h5 className="text-2xl font-black text-orange-600">{pipeline.filter(p => p.status === 'Client').length}</h5>
+                            <p className="text-[8px] text-orange-600/70 mt-1 italic">Ongoing managed accounts</p>
+                          </div>
+                        </div>
+
+                        <div className="space-y-4">
+                          <div className="flex justify-between items-end">
+                            <h5 className="text-[10px] font-black text-orbe-green uppercase">Action Status Distribution</h5>
+                          </div>
+                          <div className="h-4 flex rounded-full overflow-hidden shadow-inner bg-gray-100">
+                            {[
+                              { label: 'Done', color: 'bg-orbe-green', count: pipeline.filter(p => String(p.action_status || '').toLowerCase() === 'done').length },
+                              { label: 'Pending', color: 'bg-blue-400', count: pipeline.filter(p => String(p.action_status || '').toLowerCase() === 'pending' || !p.action_status).length },
+                              { label: 'Postponed', color: 'bg-amber-400', count: pipeline.filter(p => String(p.action_status || '').toLowerCase().includes('postpone')).length }
+                            ].map(seg => {
+                              const pct = pipeline.length > 0 ? (seg.count / pipeline.length) * 100 : 0;
+                              return (
+                                <div 
+                                  key={seg.label}
+                                  title={`${seg.label}: ${seg.count}`}
+                                  style={{ width: `${pct}%` }} 
+                                  className={`${seg.color} transition-all border-r border-white/20 last:border-0`} 
+                                />
+                              );
+                            })}
+                          </div>
+                          <div className="flex gap-4">
+                            <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-orbe-green" /><span className="text-[8px] font-bold text-gray-500 uppercase">Done</span></div>
+                            <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-blue-400" /><span className="text-[8px] font-bold text-gray-500 uppercase">Pending</span></div>
+                            <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-amber-400" /><span className="text-[8px] font-bold text-gray-500 uppercase">Postponed</span></div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 2. NEXT 7 DAYS TIMELINE */}
+                    <div className="bg-white p-6 rounded-3xl border border-orbe-tan/30 shadow-sm relative overflow-hidden">
+                      {/* Decor sutil */}
+                      <div className="absolute top-0 right-0 w-32 h-32 bg-orbe-tan/5 rounded-bl-full -mr-16 -mt-16" />
+                      
+                      <div className="flex items-center justify-between mb-6 relative z-10">
+                        <div>
+                          <h4 className="text-sm font-black text-orbe-green uppercase tracking-tight">Timeline: Next 7 Days</h4>
+                          <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Scheduled activity distribution</p>
+                        </div>
+                        <div className="px-3 py-1 bg-orbe-green/5 rounded-full border border-orbe-tan/20 flex items-center gap-2">
+                           <div className="w-2 h-2 rounded-full bg-orbe-green animate-pulse" />
+                           <span className="text-[8px] font-black text-orbe-green uppercase">Live Calendar View</span>
+                        </div>
+                      </div>
+                      
+                      <div className="grid grid-cols-7 gap-3 relative z-10">
+                        {Array.from({ length: 7 }).map((_, i) => {
+                          const date = new Date();
+                          date.setDate(date.getDate() + i);
+                          const isToday = i === 0;
+                          const dayName = date.toLocaleDateString('en-US', { weekday: 'short' });
+                          const dayNum = date.getDate();
+                          
+                          const count = pipeline.filter(p => {
+                            const d = parseFlexibleDate(p.next_action_date);
+                            return d && d.getDate() === dayNum && d.getMonth() === date.getMonth() && d.getFullYear() === date.getFullYear() && String(p.action_status || '').trim().toLowerCase() !== 'done';
+                          }).length;
+
+                          const maxCount = 10; 
+                          const height = Math.min(100, (count / maxCount) * 100);
+
+                          return (
+                            <div key={`timeline-${i}`} className="flex flex-col items-center gap-3 group">
+                              <div className="flex-1 w-full bg-gray-50 rounded-xl relative overflow-hidden min-h-[140px] border border-gray-100 flex flex-col justify-end p-1 hover:border-orbe-tan/30 transition-all">
+                                <motion.div 
+                                  initial={{ height: 0 }}
+                                  animate={{ height: `${height}%` }}
+                                  className={`w-full rounded-lg transition-all ${isToday ? 'bg-orbe-green shadow-lg shadow-orbe-green/20' : 'bg-orbe-tan/40'}`}
+                                />
+                                {count > 0 && (
+                                  <div className="absolute inset-0 flex items-center justify-center">
+                                    <span className={`text-sm font-black ${isToday ? 'text-white' : 'text-orbe-green'} drop-shadow-sm`}>{count}</span>
+                                  </div>
+                                )}
+                              </div>
+                              <div className="text-center group-hover:scale-110 transition-transform">
+                                <p className={`text-[8px] font-black uppercase tracking-widest ${isToday ? 'text-orbe-green' : 'text-gray-400'}`}>{dayName}</p>
+                                <p className={`text-[10px] font-black ${isToday ? 'text-orbe-green font-black scale-110' : 'text-gray-600'}`}>{dayNum}</p>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
                   </div>
-                </div>
-                </div>
                 )}
 
                 {dashboardTab === 'activity' && (
-                  <div className="space-y-8 animate-in fade-in duration-300">
+                  <div className="space-y-8 animate-in fade-in duration-500 pb-20">
                     {/* CONTROL DE ACTIVIDAD */}
                     <div className="space-y-4">
-                      <div className="flex items-center gap-2 px-1">
-                        <ShieldCheck size={20} className="text-orbe-green" />
-                        <h4 className="text-lg font-black text-orbe-green uppercase tracking-tight">Activity Control (Actions per Salesperson)</h4>
+                      <div className="flex items-center justify-between px-1">
+                        <div className="flex items-center gap-3">
+                          <div className="p-2 bg-orbe-green/10 rounded-xl">
+                            <ShieldCheck size={20} className="text-orbe-green" />
+                          </div>
+                          <div>
+                            <h4 className="text-lg font-black text-orbe-green uppercase tracking-tight">Active Operation Center</h4>
+                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest leading-none">Activity & Progress Control</p>
+                          </div>
+                        </div>
                       </div>
                       
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                         {['Juanjo', 'Alejandro'].map((owner) => {
                           const now = new Date();
-                          const getCount = (days: number) => {
+                          
+                          const getActivityItems = (days: number) => {
                             const limit = new Date();
+                            limit.setHours(0, 0, 0, 0);
                             limit.setDate(now.getDate() - days);
                             return pipeline.filter(p => 
-                              p.owner === owner && 
+                              String(p.owner_id || '').trim().toLowerCase() === owner.toLowerCase() && 
                               parseFlexibleDate(p.last_contact_date) && 
-                              parseFlexibleDate(p.last_contact_date)! >= limit
-                            ).length;
+                              parseFlexibleDate(p.last_contact_date)!.getTime() >= limit.getTime()
+                            );
                           };
 
-                          const postponedCount = pipeline.filter(p => 
-                            p.owner === owner && 
-                            String(p.action_status || '').trim().toLowerCase() === 'postpone'
+                          const getPostponedStats = (days: number) => {
+                            const getBaseline = (daysAgo: number) => {
+                              const d = new Date();
+                              d.setDate(d.getDate() - daysAgo);
+                              d.setHours(0, 0, 0, 0);
+                              return d.getTime();
+                            };
+
+                            const currentLimit = getBaseline(days);
+                            const prevLimit = getBaseline(days + 7); // Comparar con la semana exacta anterior
+
+                            const relevantItems = pipeline.filter(p => 
+                              String(p.owner_id || '').trim().toLowerCase() === owner.toLowerCase() && 
+                              (String(p.action_status || '').trim().toLowerCase() === 'postpone' || 
+                               String(p.action_status || '').trim().toLowerCase() === 'postponed')
+                            );
+
+                            const currentCount = relevantItems.filter(p => {
+                              const itemDate = (parseFlexibleDate(p.created_at) || parseFlexibleDate(p.last_contact_date))?.getTime();
+                              return itemDate && itemDate >= currentLimit;
+                            }).length;
+
+                            const prevPeriodCount = relevantItems.filter(p => {
+                              const itemDate = (parseFlexibleDate(p.created_at) || parseFlexibleDate(p.last_contact_date))?.getTime();
+                              const comparisonLimit = getBaseline(days * 2);
+                              return itemDate && itemDate >= comparisonLimit && itemDate < currentLimit;
+                            }).length;
+
+                            const prevWeekLimit = getBaseline(days + 7);
+                            const prevWeekCount = relevantItems.filter(p => {
+                              const itemDate = (parseFlexibleDate(p.created_at) || parseFlexibleDate(p.last_contact_date))?.getTime();
+                              return itemDate && itemDate >= prevWeekLimit && itemDate < currentLimit;
+                            }).length;
+
+                            let trend = 0;
+                            const countForTrend = days === 7 ? prevWeekCount : prevPeriodCount;
+                            if (countForTrend > 0) {
+                              trend = Math.round(((currentCount - countForTrend) / countForTrend) * 100);
+                            } else if (currentCount > 0) {
+                              trend = 100;
+                            }
+
+                            return { count: currentCount, trend };
+                          };
+
+                          const allTimePostponed = pipeline.filter(p => 
+                            String(p.owner_id || '').trim().toLowerCase() === owner.toLowerCase() && 
+                            (String(p.action_status || '').trim().toLowerCase() === 'postpone' || String(p.action_status || '').trim().toLowerCase() === 'postponed')
                           ).length;
 
+                          const p7 = getPostponedStats(7);
+                          const p14 = getPostponedStats(14);
+                          const p30 = getPostponedStats(30);
+
                           return (
-                            <div key={`activity-tab-${owner}`} className="bg-white rounded-2xl p-6 border border-orbe-tan/50 shadow-sm flex flex-col gap-6 transition-all hover:shadow-md">
-                              <div className="flex items-center justify-between">
+                            <div key={`activity-tab-${owner}`} className="bg-white rounded-3xl p-6 border border-orbe-tan/30 shadow-sm flex flex-col gap-6 transition-all hover:shadow-md relative overflow-hidden group">
+                              {/* Decor sutil */}
+                              <div className="absolute -right-4 -top-4 w-24 h-24 bg-orbe-green/5 rounded-full blur-2xl group-hover:bg-orbe-green/10 transition-all duration-700" />
+                              
+                              <div className="flex items-center justify-between relative z-10">
                                 <div className="flex items-center gap-4">
-                                  <div className="w-12 h-12 rounded-2xl bg-orbe-green/10 flex items-center justify-center text-orbe-green font-black text-xl">
+                                  <div className={`w-14 h-14 rounded-2xl flex items-center justify-center text-white font-black text-2xl shadow-lg ${owner === 'Juanjo' ? 'bg-[#5B8C5A] shadow-[#5B8C5A]/10' : 'bg-[#7C9A92] shadow-[#7C9A92]/10'}`}>
                                     {owner[0]}
                                   </div>
                                   <div>
-                                    <h5 className="font-black text-orbe-green text-lg leading-none">{owner}</h5>
-                                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Action Metrics</p>
+                                    <h5 className="font-black text-orbe-green text-xl leading-none">{owner}</h5>
+                                    <div className="flex items-center gap-1.5 mt-2">
+                                      <div className={`w-1.5 h-1.5 rounded-full animate-pulse ${owner === 'Juanjo' ? 'bg-[#5B8C5A]' : 'bg-[#7C9A92]'}`} />
+                                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Active Monitoring</p>
+                                    </div>
                                   </div>
                                 </div>
+
                                 <div className="flex flex-col items-end">
-                                  <span className="text-[10px] font-black text-orange-500 uppercase tracking-widest">Postponed</span>
-                                  <div className="flex items-center gap-1.5">
-                                    <History size={14} className="text-orange-400" />
-                                    <span className="text-xl font-black text-orange-500">{postponedCount}</span>
+                                  <div className="flex items-center gap-1.5 bg-orange-50 px-3 py-1.5 rounded-full border border-orange-100">
+                                    <Clock size={12} className="text-orange-500" />
+                                    <span className="text-[10px] font-black text-orange-600 uppercase tracking-widest">Postponed Balance</span>
+                                  </div>
+                                  <div className="flex items-baseline gap-2 mt-2">
+                                    <span className="text-2xl font-black text-orange-600">{allTimePostponed}</span>
+                                    <span className={`text-[10px] font-bold ${p7.trend > 0 ? 'text-red-500' : p7.trend < 0 ? 'text-green-500' : 'text-gray-400'}`}>
+                                      {p7.trend > 0 ? '↑' : p7.trend < 0 ? '↓' : ''}{Math.abs(p7.trend)}% vs prev week
+                                    </span>
                                   </div>
                                 </div>
                               </div>
 
-                              <div className="grid grid-cols-3 gap-4">
-                                {[
-                                  { label: '7 días', val: getCount(7), color: 'bg-green-50 text-green-600 border-green-100' },
-                                  { label: '14 días', val: getCount(14), color: 'bg-orange-50 text-orange-600 border-orange-100' },
-                                  { label: '30 días', val: getCount(30), color: 'bg-orbe-green text-white border-orbe-green' },
-                                ].map(card => (
-                                  <div key={card.label} className={`${card.color} p-4 rounded-xl border flex flex-col items-center justify-center transition-transform hover:scale-105 cursor-default`}>
-                                    <span className="text-2xl font-black">{card.val}</span>
-                                    <span className="text-[8px] font-bold uppercase tracking-widest mt-1 opacity-80">{card.label}</span>
-                                  </div>
-                                ))}
+                              {/* Activity Buckets */}
+                              <div className="space-y-3">
+                                <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">Registered Interactions</p>
+                                <div className="grid grid-cols-3 gap-3">
+                                  {[
+                                    { label: '7 DÍAS', days: 7, color: 'bg-[#F2F9F2] text-[#3D7A3C] border-[#E0F2E0] hover:bg-[#E8F5E8]' },
+                                    { label: '14 DÍAS', days: 14, color: 'bg-orange-50 text-orange-600 border-orange-100 hover:bg-orange-100/50' },
+                                    { label: '30 DÍAS', days: 30, color: 'bg-orbe-green text-white border-orbe-green shadow-lg shadow-orbe-green/10 hover:brightness-110 flex-col' },
+                                  ].map(card => {
+                                    const items = getActivityItems(card.days);
+                                    return (
+                                      <button 
+                                        key={card.label} 
+                                        onClick={() => setSelectedActivityList({ owner, days: card.days, items })}
+                                        className={`${card.color} p-4 rounded-2xl border flex flex-col items-center justify-center transition-all hover:scale-[1.05] active:scale-95 group/card`}
+                                      >
+                                        <span className="text-2xl font-black tracking-tighter">{items.length}</span>
+                                        <span className="text-[9px] font-black uppercase tracking-widest mt-1 opacity-70 flex items-center gap-1">
+                                          {card.label} <ChevronRight size={10} className="group-hover/card:translate-x-0.5 transition-transform" />
+                                        </span>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+
+                              {/* Postponed Breakdown */}
+                              <div className="space-y-3">
+                                <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">Postpone Analysis</p>
+                                <div className="grid grid-cols-3 gap-3">
+                                  {[
+                                    { label: '7d', stats: p7 },
+                                    { label: '14d', stats: p14 },
+                                    { label: '30d', stats: p30 }
+                                  ].map(item => (
+                                    <div key={`p-break-${item.label}`} className="bg-gray-50/50 p-3 rounded-2xl border border-gray-100 flex flex-col items-center">
+                                      <span className="text-lg font-black text-gray-700 leading-none">{item.stats.count}</span>
+                                      <span className="text-[8px] font-bold text-gray-400 uppercase mt-1 tracking-widest">{item.label}</span>
+                                      <span className={`text-[7px] font-black mt-1 ${item.stats.trend > 0 ? 'text-red-400' : 'text-green-400'}`}>
+                                        {item.stats.trend === 0 ? '' : item.stats.trend > 0 ? `+${item.stats.trend}%` : `${item.stats.trend}%`}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
                               </div>
                             </div>
                           );
@@ -2349,28 +2751,83 @@ export default function App() {
                       </div>
                     </div>
 
-                    <div className="bg-white rounded-2xl border border-orbe-tan/50 shadow-sm overflow-hidden">
-                      <div className="p-5 border-b border-orbe-tan/30 bg-gray-50/50 flex justify-between items-center">
-                        <div className="flex items-center gap-2">
-                          <Clock size={18} className="text-orbe-tan" />
-                          <h4 className="text-sm font-black text-orbe-green uppercase tracking-tight">Timeline of Last Contacts (Seniority)</h4>
+                    {/* Timeline of Last Contacts (Seniority) */}
+                    <div className="bg-white rounded-3xl border border-orbe-tan/30 shadow-sm overflow-hidden flex flex-col">
+                      <div className="p-6 border-b border-orbe-tan/20 bg-gray-50/30 flex flex-col md:flex-row justify-between items-stretch md:items-center gap-6">
+                        <div className="flex items-center gap-3">
+                          <div className="p-2 bg-blue-50 text-blue-600 rounded-xl">
+                            <Clock size={20} />
+                          </div>
+                          <div>
+                            <h4 className="text-lg font-black text-orbe-green uppercase tracking-tight">Timeline Seniority & Recovery</h4>
+                            <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Identify abandoned clients by contact age</p>
+                          </div>
                         </div>
-                        <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Oldest contacts shown first</span>
+
+                        <div className="flex flex-col md:flex-row items-center gap-3">
+                          {/* Seller Filter */}
+                          <div className="flex p-1 bg-gray-100 rounded-xl gap-1 w-full md:w-auto">
+                            {USERS.map(user => (
+                              <button 
+                                key={`timeline-seller-${user}`}
+                                onClick={() => setTimelineSellerFilter(user)}
+                                className={`flex-1 md:flex-none px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition-all ${timelineSellerFilter === user ? 'bg-orbe-green text-white shadow-sm' : 'text-orbe-green/40 hover:text-orbe-green/60'}`}
+                              >
+                                {user}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Temperature Tabs */}
+                      <div className="flex border-b border-orbe-tan/10 bg-white sticky top-0 z-20">
+                        {[
+                          { label: 'Active', range: '< 30 days', icon: <Zap size={14} />, color: 'text-green-500', active: 'border-green-500 bg-green-50/30 text-green-600' },
+                          { label: 'Warning', range: '30-60 days', icon: <Clock size={14} />, color: 'text-orange-500', active: 'border-orange-500 bg-orange-50/30 text-orange-600' },
+                          { label: 'Cold', range: '> 60 days', icon: <AlertCircle size={14} />, color: 'text-red-500', active: 'border-red-500 bg-red-50/30 text-red-600' },
+                        ].map(tab => (
+                          <button
+                            key={tab.label}
+                            onClick={() => setTimelineTemperature(tab.label as any)}
+                            className={`flex-1 py-4 border-b-4 transition-all flex flex-col items-center gap-1 ${timelineTemperature === tab.label ? tab.active : 'border-transparent text-gray-400 hover:bg-gray-50'}`}
+                          >
+                            <div className="flex items-center gap-2">
+                              {tab.icon}
+                              <span className="text-[11px] font-black uppercase tracking-[0.2em]">{tab.label}</span>
+                            </div>
+                            <span className="text-[8px] font-bold opacity-60 uppercase">{tab.range}</span>
+                          </button>
+                        ))}
                       </div>
                       
-                      <div className="max-h-[500px] overflow-auto">
+                      <div className="max-h-[600px] overflow-auto scrollbar-thin scrollbar-thumb-orbe-tan/20">
                         <table className="w-full text-left">
-                          <thead className="bg-[#fcfaf7] sticky top-0 border-b border-orbe-tan/30 z-10">
+                          <thead className="bg-[#fcfaf7] sticky top-0 border-b border-orbe-tan/20 z-10">
                             <tr>
-                              <th className="p-4 text-[9px] font-bold text-gray-400 uppercase tracking-widest">Empresa</th>
-                              <th className="p-4 text-[9px] font-bold text-gray-400 uppercase tracking-widest">Vendedor</th>
-                              <th className="p-4 text-[9px] font-bold text-gray-400 uppercase tracking-widest">Último Contacto</th>
-                              <th className="p-4 text-[9px] font-bold text-gray-400 uppercase tracking-widest text-right">Tiempo transcurrido</th>
+                              <th className="p-4 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Empresa</th>
+                              <th className="p-4 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Responsable</th>
+                              <th className="p-4 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Último Contacto</th>
+                              <th className="p-4 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] text-right">Seniority</th>
+                              <th className="p-4 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] text-right">Quick Task</th>
                             </tr>
                           </thead>
-                          <tbody className="divide-y divide-orbe-tan/10 text-xs">
+                          <tbody className="divide-y divide-orbe-tan/10 text-[11px]">
                             {pipeline
-                              .filter(p => p.last_contact_date)
+                              .filter(p => {
+                                const d = parseFlexibleDate(p.last_contact_date);
+                                if (!d) return false;
+                                const days = Math.floor((new Date().getTime() - d.getTime()) / (1000 * 3600 * 24));
+                                
+                                // Filter by Seller
+                                if (timelineSellerFilter !== 'All' && p.owner_id !== timelineSellerFilter) return false;
+
+                                // Filter by Temperature
+                                if (timelineTemperature === 'Active') return days < 30;
+                                if (timelineTemperature === 'Warning') return days >= 30 && days <= 60;
+                                if (timelineTemperature === 'Cold') return days > 60;
+                                return true;
+                              })
                               .sort((a, b) => {
                                 const dA = parseFlexibleDate(a.last_contact_date)?.getTime() || 0;
                                 const dB = parseFlexibleDate(b.last_contact_date)?.getTime() || 0;
@@ -2381,125 +2838,175 @@ export default function App() {
                                 const daysGone = d ? Math.floor((new Date().getTime() - d.getTime()) / (1000 * 3600 * 24)) : '?';
                                 
                                 return (
-                                  <tr key={`timeline-full-${item.id}`} className="hover:bg-orbe-cream/20 transition-colors">
+                                  <tr key={`timeline-full-${item.id}`} className="hover:bg-orbe-cream/20 transition-all group">
                                     <td className="p-4">
-                                      <div className="font-bold text-orbe-green">{item.company}</div>
-                                      <div className="text-[9px] text-gray-400 truncate max-w-[200px]">{item.last_action}</div>
+                                      <div className="font-black text-orbe-green text-[13px] group-hover:translate-x-1 transition-transform">{item.company_name}</div>
+                                      <div className="text-[10px] text-gray-400 truncate max-w-[200px] mt-0.5 italic">"{item.last_activity}"</div>
                                     </td>
                                     <td className="p-4">
-                                      <span className="px-2 py-0.5 bg-gray-100 rounded text-[9px] font-bold text-gray-500 uppercase">{item.owner}</span>
+                                      <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest ${item.owner === 'Juanjo' ? 'bg-[#5B8C5A]/10 text-[#5B8C5A]' : 'bg-[#7C9A92]/10 text-[#7C9A92]'}`}>
+                                        {item.owner}
+                                      </span>
                                     </td>
-                                    <td className="p-4 font-mono text-gray-500">
+                                    <td className="p-4 font-mono text-gray-500 font-bold">
                                       {formatDateSafe(item.last_contact_date)}
                                     </td>
                                     <td className="p-4 text-right">
-                                      <span className={`font-black text-[10px] flex justify-end items-center gap-1.5 ${Number(daysGone) > 30 ? 'text-red-500' : Number(daysGone) > 14 ? 'text-orange-500' : 'text-green-500'}`}>
-                                        {Number(daysGone) > 30 && <AlertCircle size={12} />}
-                                        {daysGone} days ago
+                                      <span className={`font-black text-[10px] flex justify-end items-center gap-2 ${Number(daysGone) > 60 ? 'text-red-500' : Number(daysGone) >= 30 ? 'text-orange-500' : 'text-green-500'}`}>
+                                        {Number(daysGone) > 60 ? <AlertCircle size={12} /> : Number(daysGone) >= 30 ? <Clock size={12} /> : <Zap size={12} />}
+                                        {daysGone} DÍAS
                                       </span>
+                                    </td>
+                                    <td className="p-4 text-right">
+                                      <button 
+                                        onClick={() => {
+                                          setSearchTerm(item.company_name || '');
+                                          setView('pipeline');
+                                          // Se asume que al volver a pipeline con el search term, el usuario puede agendar
+                                        }}
+                                        className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-orbe-green/10 text-orbe-green rounded-lg text-[9px] font-black uppercase tracking-widest hover:bg-orbe-green hover:text-white transition-all shadow-sm active:scale-95"
+                                      >
+                                        <PlusCircle size={12} />
+                                        Schedule
+                                      </button>
                                     </td>
                                   </tr>
                                 );
                               })}
+                            {pipeline.filter(p => {
+                              const d = parseFlexibleDate(p.last_contact_date);
+                              if (!d) return false;
+                              const days = Math.floor((new Date().getTime() - d.getTime()) / (1000 * 3600 * 24));
+                              if (timelineSellerFilter !== 'All' && p.owner_id !== timelineSellerFilter) return false;
+                              if (timelineTemperature === 'Active') return days < 30;
+                              if (timelineTemperature === 'Warning') return days >= 30 && days <= 60;
+                              if (timelineTemperature === 'Cold') return days > 60;
+                              return true;
+                            }).length === 0 && (
+                              <tr>
+                                <td colSpan={5} className="p-20 text-center text-gray-400 font-bold uppercase tracking-widest text-[10px] italic bg-gray-50/50">
+                                  No clients found in this segment
+                                </td>
+                              </tr>
+                            )}
                           </tbody>
                         </table>
                       </div>
                     </div>
                   </div>
                 )}
-
-                {dashboardTab === 'overview' && (
-                  <div className="hidden md:grid grid-cols-2 gap-6">
-                    {['Alejandro', 'Juanjo'].map((owner) => {
-                      const ownerActions = pipeline.filter(p => 
-                        p.owner === owner && 
-                        String(p.action_status || '').trim().toLowerCase() !== 'done'
-                      );
-                      const overdueActions = ownerActions.filter(p => isOverdue(p.action_date));
-                      
-                      return (
-                        <div key={`overview-tasks-${owner}`} className="bg-white rounded-2xl shadow-sm border border-orbe-tan/50 overflow-hidden flex flex-col flex-1 min-h-[500px]">
-                          <div className="p-4 border-b border-orbe-tan/30 bg-gray-50/50 flex justify-between items-center">
-                            <div className="flex items-center gap-3">
-                              <div className="w-8 h-8 rounded-full bg-orbe-green flex items-center justify-center text-white font-bold text-xs shadow-sm">
-                                {owner[0]}
-                              </div>
-                              <h4 className="text-sm font-black text-orbe-green uppercase tracking-tight">{owner}</h4>
-                            </div>
-                            <div className="flex gap-2">
-                               <div className="px-3 py-0.5 bg-white border border-orbe-tan/40 rounded-full text-[9px] font-bold text-gray-500">
-                                 Total: {ownerActions.length}
-                               </div>
-                               {overdueActions.length > 0 && (
-                                 <div className="px-3 py-0.5 bg-red-50 text-red-600 border border-red-100 rounded-full text-[9px] font-bold flex items-center gap-1">
-                                   <AlertCircle size={9} /> {overdueActions.length} Overdue
-                                 </div>
-                               )}
-                            </div>
-                          </div>
-                          
-                          <div className="flex-1 overflow-auto bg-white">
-                            <table className="w-full text-left border-collapse">
-                              <thead className="bg-[#fcfaf7] sticky top-0 border-b border-orbe-tan/30 z-10">
-                                <tr>
-                                  <th className="p-3 text-[9px] font-bold text-gray-400 uppercase tracking-widest">Company</th>
-                                  <th className="p-3 text-[9px] font-bold text-gray-400 uppercase tracking-widest">Due Date</th>
-                                  <th className="p-3 text-[9px] font-bold text-gray-400 uppercase tracking-widest text-right">Status</th>
-                                </tr>
-                              </thead>
-                              <tbody className="divide-y divide-orbe-tan/10 text-[11px]">
-                                {ownerActions.length === 0 ? (
-                                  <tr>
-                                    <td colSpan={3} className="p-10 text-center text-[11px] text-gray-400 italic">No active follow-ups</td>
-                                  </tr>
-                                ) : (
-                                  ownerActions
-                                    .sort((a, b) => new Date(a.action_date).getTime() - new Date(b.action_date).getTime())
-                                    .map(item => (
-                                    <tr key={item.id} className="hover:bg-orbe-cream/20 transition-colors">
-                                      <td className="px-3 py-2">
-                                        <div className="font-bold text-orbe-green truncate max-w-[150px]">{item.company}</div>
-                                        <div className="text-[9px] text-gray-400 truncate max-w-[150px] italic">{item.last_action || 'No notes'}</div>
-                                      </td>
-                                      <td className="px-3 py-2 font-mono text-[10px] text-gray-500">
-                                        {formatDateSafe(item.action_date)}
-                                      </td>
-                                      <td className="px-3 py-2 text-right">
-                                        <span className={`text-[8px] font-black px-1.5 py-0.5 rounded border uppercase tracking-widest ${isOverdue(item.action_date) ? 'bg-red-50 text-red-600 border-red-100' : 'bg-green-50 text-green-600 border-green-100'}`}>
-                                          {isOverdue(item.action_date) ? 'Overdue' : 'On Time'}
-                                        </span>
-                                      </td>
-                                    </tr>
-                                  ))
-                                )}
-                              </tbody>
-                            </table>
-                          </div>
-                          
-                          <div className="p-3 bg-gray-50 border-t border-orbe-tan/20">
-                            {ownerActions.length > 0 && overdueActions.length === 0 ? (
-                              <div className="flex items-center gap-2 text-green-600 text-[9px] font-bold">
-                                <CheckCircle size={12} /> All up to date! Great job.
-                              </div>
-                            ) : ownerActions.length > 0 ? (
-                               <div className="flex items-center gap-2 text-red-500 text-[10px] font-bold">
-                                <AlertCircle size={14} /> Has urgent actions to resolve.
-                              </div>
-                            ) : (
-                              <div className="flex items-center gap-2 text-gray-400 text-[10px] font-bold">
-                                <Clock size={14} /> No recent activity.
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </motion.div>
+            </motion.div>
             )}
 
-          {view === 'database' && (
+                {/* ACTIVITY DETAIL DRAWER */}
+                <AnimatePresence>
+                  {selectedActivityList && (
+                    <div className="fixed inset-0 z-[60] flex justify-end">
+                      <motion.div 
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        onClick={() => setSelectedActivityList(null)}
+                        className="absolute inset-0 bg-black/40 backdrop-blur-sm shadow-2xl"
+                      />
+                      <motion.div 
+                        initial={{ x: '100%' }}
+                        animate={{ x: 0 }}
+                        exit={{ x: '100%' }}
+                        transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+                        className="relative w-full max-w-md bg-white h-full shadow-2xl flex flex-col border-l border-orbe-tan/30 overflow-hidden"
+                      >
+                        {/* Header Drawer */}
+                        <div className="p-6 border-b border-orbe-tan/20 flex items-center justify-between bg-orbe-green text-white">
+                          <div className="flex items-center gap-3">
+                            <div className="p-2 bg-white/10 rounded-xl">
+                              <History size={20} />
+                            </div>
+                            <div>
+                              <h3 className="font-black text-lg uppercase tracking-tight">{selectedActivityList.owner} - Activities</h3>
+                              <p className="text-[10px] font-bold text-white/60 uppercase tracking-widest">Last {selectedActivityList.days} days summary</p>
+                            </div>
+                          </div>
+                          <button 
+                            onClick={() => setSelectedActivityList(null)}
+                            className="p-2 hover:bg-white/10 rounded-full transition-colors"
+                          >
+                            <XCircle size={24} />
+                          </button>
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto p-6 space-y-8 scrollbar-thin scrollbar-thumb-orbe-tan/20">
+                          {/* Mini Pie Chart Breakdown */}
+                          <div className="space-y-4">
+                            <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-2">
+                              <Target size={12} /> Action Type Distribution
+                            </h4>
+                            <div className="flex flex-wrap gap-2">
+                              {/* Calculate groups */}
+                              {Object.entries(
+                                selectedActivityList.items.reduce((acc: any, item) => {
+                                  const name = item.last_activity || 'Others';
+                                  acc[name] = (acc[name] || 0) + 1;
+                                  return acc;
+                                }, {})
+                              ).map(([name, count]: [string, any]) => {
+                                const percentage = Math.round((count / selectedActivityList.items.length) * 100);
+                                return (
+                                  <div key={name} className="bg-gray-50 border border-gray-100 px-3 py-2 rounded-xl flex flex-col items-center min-w-[80px]">
+                                    <span className="text-lg font-black text-orbe-green">{percentage}%</span>
+                                    <span className="text-[8px] font-bold text-gray-400 uppercase text-center mt-0.5 leading-tight truncate w-full">{name}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+
+                          {/* List of actions */}
+                          <div className="space-y-4">
+                            <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-2">
+                              <Clock size={12} /> Detailed History
+                            </h4>
+                            <div className="space-y-3">
+                              {selectedActivityList.items
+                                .sort((a,b) => new Date(b.last_contact_date).getTime() - new Date(a.last_contact_date).getTime())
+                                .map(item => (
+                                <div key={`drawer-item-${item.id}`} className="bg-white border border-orbe-tan/30 p-4 rounded-2xl shadow-sm hover:border-orbe-green/30 transition-all flex flex-col gap-2 relative overflow-hidden group">
+                                  <div className="absolute right-0 top-0 w-1 h-full bg-orbe-tan/20 group-hover:bg-orbe-green transition-colors" />
+                                  <div className="flex justify-between items-start">
+                                    <h5 className="font-black text-orbe-green text-sm uppercase tracking-tight">{item.company_name}</h5>
+                                    <span className="text-[9px] font-mono text-gray-400 font-bold">{formatDateSafe(item.last_contact_date)}</span>
+                                  </div>
+                                  <p className="text-xs text-gray-600 border-l-2 border-orbe-tan/20 pl-3 py-1 italic bg-gray-50/50 rounded-r-lg">"{item.last_activity}"</p>
+                                  <div className="flex items-center gap-2 mt-1">
+                                    <span className={`text-[8px] font-black py-0.5 px-1.5 rounded uppercase tracking-tighter ${item.priority === 'High' ? 'bg-red-50 text-red-500' : 'bg-blue-50 text-blue-500'}`}>
+                                      {item.priority}
+                                    </span>
+                                  </div>
+                                </div>
+                              ))}
+                              {selectedActivityList.items.length === 0 && (
+                                <div className="py-20 text-center text-gray-400 font-black uppercase text-[10px] tracking-widest italic">
+                                  No records found
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="p-6 bg-gray-50 border-t border-orbe-tan/20">
+                          <button 
+                            onClick={() => setSelectedActivityList(null)}
+                            className="w-full py-4 bg-orbe-green text-white font-black uppercase tracking-widest rounded-2xl shadow-lg shadow-orbe-green/20 active:scale-[0.98] transition-all"
+                          >
+                            Close Analysis
+                          </button>
+                        </div>
+                      </motion.div>
+                    </div>
+                  )}
+                </AnimatePresence>
+
+                {view === 'database' && (
               <motion.div 
                 key="database-view"
                 initial={{ opacity: 0 }}
@@ -2592,7 +3099,7 @@ export default function App() {
                               <td className="p-5 font-mono text-xs text-gray-400">#{c.id}</td>
                               <td className="p-5 font-bold text-orbe-green">
                                 <div className="flex flex-col">
-                                  <span>{c.company}</span>
+                                  <span>{c.company_name}</span>
                                   <span className={`text-[8px] uppercase tracking-tighter w-fit px-1 rounded border ${
                                     c.client_status === 'Client' ? 'bg-green-50 text-green-700 border-green-100' : 
                                     (c.client_status === 'Not interested' || c.client_status === 'Temporary Discarded' || c.client_status === 'Fail') ? 'bg-red-50 text-red-700 border-red-100' :
@@ -2602,7 +3109,7 @@ export default function App() {
                                   </span>
                                 </div>
                               </td>
-                              <td className="p-5 text-gray-600 font-medium">{c.contact_person}</td>
+                              <td className="p-5 text-gray-600 font-medium">{c.contact_name}</td>
                               <td className="p-5">
                                 <a href={`mailto:${c.email}`} className="text-orbe-green/70 hover:underline flex items-center gap-2">
                                   <Mail size={12} /> {c.email || '-'}
@@ -2687,9 +3194,9 @@ export default function App() {
                             <div className="p-4">
                               <div className="flex justify-between items-start">
                                 <div className="flex-1 min-w-0 pr-2">
-                                  <h4 className="font-black text-orbe-green text-lg leading-tight truncate uppercase tracking-tighter">{c.company}</h4>
+                                  <h4 className="font-black text-orbe-green text-lg leading-tight truncate uppercase tracking-tighter">{c.company_name}</h4>
                                   <div className="flex items-center gap-2 mt-1 text-gray-400 text-[10px] font-bold uppercase tracking-widest leading-none">
-                                    <UserCircle size={10} /> {c.contact_person || 'No contact'}
+                                    <UserCircle size={10} /> {c.contact_name || 'No contact'}
                                   </div>
                                 </div>
                                 <div className={`shrink-0 px-3 py-1 rounded-full font-black text-[9px] uppercase tracking-tighter border ${
@@ -2743,7 +3250,6 @@ export default function App() {
               </motion.div>
             )}
           </AnimatePresence>
-        </section>
 
         {/* MODAL EDITAR CLIENTE */}
         <AnimatePresence>
@@ -2761,7 +3267,7 @@ export default function App() {
                     <h3 className="text-2xl font-bold flex items-center gap-3">
                       <Settings className="w-6 h-6" /> Edit Information
                     </h3>
-                    <p className="text-white/60 text-sm mt-1">{editingClient.company}</p>
+                    <p className="text-white/60 text-sm mt-1">{editingClient.company_name}</p>
                   </div>
                   <button onClick={() => setEditingClient(null)} className="p-2 hover:bg-white/10 rounded-full transition-colors text-white">
                     <XCircle className="w-8 h-8" />
@@ -2780,8 +3286,8 @@ export default function App() {
                     try {
                       const formData = new FormData(e.currentTarget);
                       const updates: any = {
-                        company: (formData.get('company') as string || '').trim(),
-                        contact_person: (formData.get('contact_person') as string || '').trim(),
+                        company_name: (formData.get('company_name') as string || '').trim(),
+                        contact_name: (formData.get('contact_name') as string || '').trim(),
                         lead_name: (formData.get('lead_name') as string || '').trim(),
                         email: (formData.get('email') as string || '').trim(),
                         phone: (formData.get('phone') as string || '').trim(),
@@ -2792,7 +3298,7 @@ export default function App() {
 
                       console.log("Form Updates Detected:", updates);
 
-                      if (!updates.company) {
+                      if (!updates.company_name) {
                         alert("Company name is required.");
                         return;
                       }
@@ -2803,7 +3309,7 @@ export default function App() {
                       }
 
                       console.log("Calling handleUpdateClient...");
-                      await handleUpdateClient(editingClient.id, updates);
+                      await handleUpdateClient(editingClient.client_id, updates);
                       setEditingClient(null);
                       console.log("Update successful, closed modal");
                     } catch (err: any) {
@@ -2816,7 +3322,7 @@ export default function App() {
                   <div className="grid grid-cols-2 gap-4">
                     <div className="col-span-2">
                       <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Company Name</label>
-                      <input name="company" defaultValue={editingClient.company} className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-lg focus:ring-2 ring-orbe-green/10 outline-none transition-all font-semibold text-orbe-green" />
+                      <input name="company_name" defaultValue={editingClient.company_name} className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-lg focus:ring-2 ring-orbe-green/10 outline-none transition-all font-semibold text-orbe-green" />
                     </div>
                     <div>
                       <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Lead Name</label>
@@ -2824,7 +3330,7 @@ export default function App() {
                     </div>
                     <div>
                       <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Contact Person</label>
-                      <input name="contact_person" defaultValue={editingClient.contact_person} className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-lg focus:ring-2 ring-orbe-green/10 outline-none transition-all" />
+                      <input name="contact_name" defaultValue={editingClient.contact_name} className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-lg focus:ring-2 ring-orbe-green/10 outline-none transition-all" />
                     </div>
                     <div>
                       <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Corporate Email</label>
@@ -2893,102 +3399,139 @@ export default function App() {
                 exit={{ scale: 0.9, y: 20 }}
                 className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden border border-orbe-tan/30"
               >
-                <div className="bg-orbe-green p-6 text-white text-center">
-                    <CheckCircle className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                <div className="bg-orbe-green p-6 text-white text-center relative">
+                    <CheckCircle className="w-10 h-10 mx-auto mb-2 opacity-50" />
                     <h2 className="text-xl font-bold">Task Completed</h2>
-                    <p className="text-white/60 text-xs uppercase tracking-widest font-bold">{taskToAccomplish.company}</p>
+                    <p className="text-white/60 text-[10px] uppercase tracking-[0.2em] font-black">{taskToAccomplish.company_name}</p>
+                    <div className="flex items-center justify-center gap-2 mt-2 py-1 px-3 bg-white/10 rounded-full w-fit mx-auto border border-white/5">
+                      <UserCircle size={12} className="text-white/40" />
+                      <span className="text-[9px] font-bold text-white/70 uppercase">Responsable: {taskToAccomplish.owner || 'Unassigned'}</span>
+                    </div>
+                    <button 
+                      onClick={() => setTaskToAccomplish(null)}
+                      className="absolute top-4 right-4 p-2 hover:bg-white/10 rounded-full transition-all"
+                    >
+                      <XCircle size={18} className="text-white/40" />
+                    </button>
                   </div>
                   
                     <form 
                       onSubmit={(e) => {
                         e.preventDefault();
                         const formData = new FormData(e.currentTarget);
+                        const nextAction = accomplishAction;
+                        const comments = formData.get('comments') as string;
+
+                        if (nextAction.trim().toLowerCase() === (taskToAccomplish.last_action || '').trim().toLowerCase()) {
+                          setModalError("Please select a NEW action. You cannot repeat the same action twice.");
+                          return;
+                        }
+
+                        if (!comments || comments.trim().length < 5) {
+                          setModalError("Please provide more detailed comments (min 5 characters).");
+                          return;
+                        }
+
                         handleAccomplishTask(
                           taskToAccomplish, 
-                          formData.get('next_action') as string, 
-                          formData.get('next_due_date') as string,
-                          formData.get('comments') as string,
+                          nextAction, 
+                          accomplishDate,
+                          comments,
                           formData.get('new_status') as PipelineStatus
                         );
                       }}
-                      className="p-6 md:p-8 space-y-5"
+                      className="p-6 md:p-8 space-y-6"
                     >
+                      {modalError && (
+                        <div className="bg-red-50 border border-red-200 text-red-600 p-3 rounded-xl text-[10px] font-bold uppercase tracking-widest animate-shake">
+                          {modalError}
+                        </div>
+                      )}
+                      
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-[0.1em]">Next Sales Action</label>
+                        <div className="md:col-span-1">
+                          <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-[0.1em]">Next Action <span className="text-red-400">*</span></label>
                           <select 
                             name="next_action"
                             required
-                            className="w-full p-3 bg-gray-50 border-2 border-transparent focus:border-orbe-green/30 rounded-xl outline-none transition-all text-xs font-black text-gray-700 uppercase appearance-none cursor-pointer"
+                            value={accomplishAction}
+                            onChange={(e) => {
+                              setModalError(null);
+                              setAccomplishAction(e.target.value);
+                            }}
+                            className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-xl outline-none focus:ring-4 ring-orbe-green/5 transition-all text-sm font-black text-orbe-green uppercase appearance-none cursor-pointer"
                           >
-                            {PREDEFINED_ACTIONS.map(action => (
-                              <option 
-                                key={action} 
-                                value={action}
-                                disabled={action.toLowerCase() === (taskToAccomplish.last_action || '').toLowerCase()}
-                              >
-                                {action.toUpperCase()} {action.toLowerCase() === (taskToAccomplish.last_action || '').toLowerCase() ? '(CURRENT)' : ''}
-                              </option>
-                            ))}
+                            <option value="" disabled>SELECT ACTION</option>
+                            {PREDEFINED_ACTIONS.map(action => {
+                              const isCurrent = action.trim().toLowerCase() === (taskToAccomplish.last_action || '').trim().toLowerCase();
+                              return (
+                                <option 
+                                  key={action} 
+                                  value={action}
+                                  disabled={isCurrent}
+                                >
+                                  {action.toUpperCase()} {isCurrent ? '(CURRENT)' : ''}
+                                </option>
+                              );
+                            })}
                           </select>
                         </div>
-  
-                        <div>
+
+                        <div className="md:col-span-1">
                           <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-[0.1em]">Next Due Date <span className="text-red-400">*</span></label>
                           <input 
                             type="date"
                             name="next_due_date"
                             required
+                            min={new Date().toISOString().split('T')[0]}
                             value={accomplishDate}
                             onChange={(e) => setAccomplishDate(e.target.value)}
-                            min={new Date().toISOString().split('T')[0]}
-                            className="w-full p-3 bg-gray-50 border-2 border-transparent focus:border-orbe-green/30 rounded-xl outline-none transition-all text-xs font-black text-gray-700 uppercase"
+                            className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-xl outline-none focus:ring-4 ring-orbe-green/5 transition-all text-sm font-black text-orbe-green uppercase"
                           />
                         </div>
-                      </div>
-  
-                      <div>
-                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-[0.1em]">Comments / Notes</label>
-                        <textarea 
-                          name="comments"
-                          className="w-full p-4 bg-gray-50 border border-orbe-tan/20 rounded-2xl focus:ring-4 ring-orbe-green/5 outline-none transition-all text-sm min-h-[100px] placeholder:text-gray-300 resize-none"
-                          placeholder="Add specific context for the follow-up..."
-                        />
-                      </div>
-  
-                      <div className="bg-orbe-green/5 p-5 rounded-2xl border border-orbe-green/10 space-y-3 relative overflow-hidden group">
-                        <div className="relative">
-                          <label className="flex items-center gap-2 text-[11px] font-black text-orbe-green uppercase tracking-[0.15em] mb-1">
-                            <Target size={14} className="text-orbe-green" />
-                            Update Business Stage
-                          </label>
+
+                        <div className="md:col-span-2">
+                          <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-[0.1em]">Business Stage</label>
                           <select 
                             name="new_status"
                             defaultValue={taskToAccomplish.status}
-                            className="w-full p-3.5 bg-white border-2 border-orbe-green/20 rounded-xl outline-none focus:border-orbe-green focus:ring-4 ring-orbe-green/10 transition-all text-[12px] font-black text-orbe-green uppercase shadow-sm cursor-pointer"
+                            className="w-full p-3.5 bg-gray-50 border border-orbe-tan/30 rounded-xl outline-none focus:ring-4 ring-orbe-green/5 transition-all text-[12px] font-black text-orbe-green uppercase appearance-none cursor-pointer"
                           >
                             {PIPELINE_STATUSES.map(status => (
                               <option key={status} value={status}>{status.toUpperCase()}</option>
                             ))}
                           </select>
                         </div>
+
+                        <div className="md:col-span-2">
+                          <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-[0.1em]">Comments / Notes</label>
+                          <textarea 
+                            name="comments"
+                            required
+                            rows={4}
+                            className="w-full p-4 bg-gray-50 border border-orbe-tan/30 rounded-xl focus:ring-4 ring-orbe-green/5 outline-none transition-all text-sm min-h-[100px] resize-none"
+                            placeholder="Detail the interaction outcome here..."
+                          />
+                        </div>
                       </div>
-  
+
                       <div className="flex flex-col md:flex-row gap-3 pt-2">
                         <button 
                           type="submit"
-                          disabled={!accomplishDate}
-                          className="flex-1 py-4 bg-orbe-green text-white rounded-2xl font-black text-[11px] uppercase tracking-[0.2em] hover:bg-orbe-green/90 transition-all shadow-xl shadow-orbe-green/10 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:grayscale"
+                          disabled={!accomplishAction || !accomplishDate}
+                          className={`flex-1 py-4 rounded-2xl font-black text-[11px] uppercase tracking-[0.3em] transition-all shadow-xl active:scale-95 flex items-center justify-center gap-2 ${
+                            (!accomplishAction || !accomplishDate) 
+                              ? 'bg-gray-200 text-gray-400 cursor-not-allowed shadow-none' 
+                              : 'bg-orbe-green text-white hover:bg-orbe-green/90 shadow-orbe-green/20'
+                          }`}
                         >
+                          <CheckCircle size={18} />
                           Confirm & Schedule
                         </button>
                         <button 
                           type="button"
-                          onClick={() => {
-                            setTaskToAccomplish(null);
-                            setAccomplishDate('');
-                          }}
-                          className="py-4 px-6 md:px-8 bg-gray-100 text-gray-400 rounded-2xl font-black text-[11px] uppercase tracking-[0.1em] hover:bg-gray-200 transition-all"
+                          onClick={() => setTaskToAccomplish(null)}
+                          className="py-4 px-6 md:px-8 bg-gray-100 text-gray-400 rounded-2xl font-black text-[11px] uppercase tracking-[0.1em] hover:bg-gray-200 transition-all border border-gray-200"
                         >
                           Cancel
                         </button>
@@ -3019,14 +3562,14 @@ export default function App() {
                 <div className="bg-orbe-green p-6 text-white text-center">
                   <Calendar className="w-10 h-10 mx-auto mb-2 opacity-50" />
                   <h2 className="text-xl font-bold">Postpone Action</h2>
-                  <p className="text-white/60 text-xs uppercase tracking-widest font-bold">{postponeItem.company}</p>
+                  <p className="text-white/60 text-xs uppercase tracking-widest font-bold">{postponeItem.company_name}</p>
                 </div>
                 
                 <form 
                   onSubmit={(e) => {
                     e.preventDefault();
-                    if (!postponeReason || !postponeReason.trim()) {
-                      alert("Please provide a reason for postponing.");
+                    if (!postponeReason || !postponeReason.trim() || postponeReason.trim().length < 5) {
+                      setModalError("Please provide a valid reason (min 5 characters).");
                       setIsConfirmingPostpone(false);
                       return;
                     }
@@ -3034,8 +3577,22 @@ export default function App() {
                   }}
                   className="p-8 space-y-6"
                 >
+                  {modalError && (
+                    <div className="bg-red-50 border border-red-200 text-red-600 p-3 rounded-xl text-[10px] font-bold uppercase tracking-widest text-center animate-shake">
+                      {modalError}
+                    </div>
+                  )}
                   {!isConfirmingPostpone ? (
                     <>
+                      <div className="bg-gray-100 p-4 rounded-2xl border border-gray-200 flex items-center gap-3">
+                        <UserCircle size={20} className="text-orbe-green opacity-50" />
+                        <div>
+                          <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Assigned Owner</p>
+                          <p className="text-xs font-black text-orbe-green uppercase">{postponeItem.owner || 'Unassigned'}</p>
+                        </div>
+                        <span className="ml-auto text-[8px] font-black bg-white px-2 py-1 rounded-md border border-gray-200 text-gray-400 uppercase tracking-tighter">Persistent</span>
+                      </div>
+
                       <div>
                         <label className="block text-[10px] font-bold text-gray-400 uppercase mb-3 tracking-widest text-center">Select New Action Date</label>
                         <input 
@@ -3047,7 +3604,10 @@ export default function App() {
                             return d.toISOString().split('T')[0];
                           })()}
                           value={postponeDate}
-                          onChange={(e) => setPostponeDate(e.target.value)}
+                          onChange={(e) => {
+                            setModalError(null);
+                            setPostponeDate(e.target.value);
+                          }}
                           className="w-full p-4 bg-gray-50 border border-orbe-tan/30 rounded-xl focus:ring-2 ring-orbe-green/10 outline-none transition-all text-sm font-bold text-orbe-green text-center"
                         />
                         <p className="mt-2 text-[9px] text-gray-400 text-center italic">Limit: Next 3 months</p>
@@ -3057,7 +3617,10 @@ export default function App() {
                         <label className="block text-[10px] font-bold text-gray-400 uppercase mb-3 tracking-widest">Reason for postponing <span className="text-red-400">*</span></label>
                         <textarea 
                           value={postponeReason}
-                          onChange={(e) => setPostponeReason(e.target.value)}
+                          onChange={(e) => {
+                            setModalError(null);
+                            setPostponeReason(e.target.value);
+                          }}
                           required
                           className="w-full p-4 bg-gray-50 border border-orbe-tan/30 rounded-xl focus:ring-2 ring-orbe-green/10 outline-none transition-all text-sm min-h-[80px]"
                           placeholder="Why are you rescheduling?"
@@ -3069,13 +3632,14 @@ export default function App() {
                           type="button"
                           onClick={() => {
                             if (!postponeDate) {
-                              alert("Please select a date.");
+                              setModalError("Please select a date.");
                               return;
                             }
-                            if (!postponeReason || !postponeReason.trim()) {
-                              alert("Please provide a reason for postponing.");
+                            if (!postponeReason || !postponeReason.trim() || postponeReason.trim().length < 5) {
+                              setModalError("Please provide a valid reason (min 5 characters).");
                               return;
                             }
+                            setModalError(null);
                             setIsConfirmingPostpone(true);
                           }}
                           className="w-full py-4 bg-orbe-green text-white rounded-xl font-bold text-xs uppercase tracking-widest hover:opacity-90 transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2"
@@ -3130,6 +3694,118 @@ export default function App() {
               </motion.div>
             </motion.div>
           )}
+
+          {editingItem && (
+            <motion.div 
+              key="edit-modal-overlay"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-orbe-green/40 backdrop-blur-sm"
+            >
+              <motion.div 
+                key="edit-modal-content"
+                initial={{ scale: 0.95, y: 20 }}
+                animate={{ scale: 1, y: 0 }}
+                exit={{ scale: 0.95, y: 20 }}
+                className="bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden border border-orbe-tan/30"
+              >
+                <div className="bg-blue-600 p-6 text-white text-center relative">
+                  <Edit2 className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                  <h2 className="text-xl font-bold">Edit Pipeline Entry</h2>
+                  <p className="text-white/60 text-xs uppercase tracking-widest font-black leading-none mt-1">{editingItem.company_name}</p>
+                  <button 
+                    onClick={() => setEditingItem(null)}
+                    className="absolute top-4 right-4 p-2 hover:bg-white/10 rounded-full transition-all"
+                  >
+                    <PlusCircle size={20} style={{ transform: 'rotate(45deg)' }} />
+                  </button>
+                </div>
+                
+                <form 
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const formData = new FormData(e.currentTarget);
+                    handleEditTask(
+                      editingItem.id,
+                      editingItem.client_id,
+                      {
+                        last_activity: formData.get('last_activity') as string,
+                        status: formData.get('status') as PipelineStatus,
+                        notes: formData.get('notes') as string
+                      }
+                    );
+                  }}
+                  className="p-8 space-y-6"
+                >
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="bg-gray-50 p-3 rounded-xl border border-gray-100">
+                      <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mb-1">Current Owner</p>
+                      <div className="flex items-center gap-2">
+                        <UserCircle size={14} className="text-orbe-green/50" />
+                        <span className="text-sm font-black text-orbe-green uppercase">{editingItem.owner_id}</span>
+                      </div>
+                      <p className="text-[8px] text-gray-300 italic mt-1 leading-none">ReadOnly Field</p>
+                    </div>
+                    <div className="bg-gray-50 p-3 rounded-xl border border-gray-200">
+                      <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mb-1">Due Date</p>
+                      <div className="flex items-center gap-2">
+                        <Calendar size={14} className="text-orbe-green/50" />
+                        <span className="text-sm font-black text-orbe-green uppercase font-mono">{formatDateSafe(editingItem.next_action_date)}</span>
+                      </div>
+                      <p className="text-[8px] text-gray-300 italic mt-1 leading-none">Use Postpone flow to change</p>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Client Status / Stage</label>
+                    <select 
+                      name="status"
+                      defaultValue={editingItem.status}
+                      className="w-full p-4 bg-gray-50 border border-orbe-tan/30 rounded-xl focus:ring-4 ring-blue-500/10 outline-none transition-all text-sm font-black text-blue-800 uppercase appearance-none cursor-pointer"
+                    >
+                      {PIPELINE_STATUSES.map(status => (
+                        <option key={status} value={status}>{status.toUpperCase()}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Last Action Performed</label>
+                    <select 
+                      name="last_activity"
+                      defaultValue={editingItem.last_activity}
+                      className="w-full p-4 bg-gray-50 border border-orbe-tan/30 rounded-xl focus:ring-4 ring-blue-500/10 outline-none transition-all text-sm font-black text-blue-800 uppercase appearance-none cursor-pointer"
+                    >
+                      {PREDEFINED_ACTIONS.map(action => (
+                        <option key={action} value={action}>{action.toUpperCase()}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Detail / Comments</label>
+                    <textarea 
+                      name="notes"
+                      defaultValue={editingItem.notes}
+                      className="w-full p-4 bg-gray-50 border border-orbe-tan/30 rounded-xl focus:ring-4 ring-blue-500/10 outline-none transition-all text-sm min-h-[100px] resize-none"
+                      placeholder="Add details about the last interaction..."
+                    />
+                  </div>
+
+                  <div className="pt-2">
+                    <button 
+                      type="submit"
+                      className="w-full py-4 bg-blue-600 text-white rounded-2xl font-black text-[11px] uppercase tracking-[0.2em] hover:bg-blue-700 transition-all shadow-xl shadow-blue-600/20 active:scale-95 flex items-center justify-center gap-2"
+                    >
+                      <Save size={16} />
+                      Save Changes
+                    </button>
+                  </div>
+                </form>
+              </motion.div>
+            </motion.div>
+          )}
         </AnimatePresence>
 
         {/* MODAL HISTORIAL */}
@@ -3151,7 +3827,7 @@ export default function App() {
               >
                 <div className="bg-orbe-green p-6 text-white flex justify-between items-center">
                   <div>
-                    <h2 className="text-xl font-bold">{selectedClientForHistory.company}</h2>
+                    <h2 className="text-xl font-bold">{selectedClientForHistory.company_name}</h2>
                     <p className="text-white/60 text-xs uppercase tracking-widest font-bold">Interaction Log</p>
                   </div>
                   <button 
@@ -3176,7 +3852,7 @@ export default function App() {
                       <button 
                         onClick={() => {
                           if (newNote.trim()) {
-                            addHistoryEntry(selectedClientForHistory.id, 'note', newNote);
+                            addHistoryEntry(selectedClientForHistory.client_id, 'note', newNote);
                             setNewNote('');
                           }
                         }}
@@ -3188,35 +3864,43 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="space-y-4">
+                    <div className="space-y-4">
                     {loadingHistory ? (
-                      <div key="loading-history" className="py-10 text-center text-gray-400 italic">Loading log...</div>
+                      <div key="loading-history" className="py-10 text-center text-gray-400 italic">Cargando bitácora...</div>
                     ) : clientHistory.length === 0 ? (
-                      <div key="no-history" className="py-10 text-center text-gray-400 italic">No previous records.</div>
+                      <div key="no-history" className="py-10 text-center text-gray-400 italic">No hay registros previos.</div>
                     ) : (
                       clientHistory.map((item) => (
-                        <div key={item.id} className="relative pl-8 border-l-2 border-orbe-tan/30 last:border-l-0 pb-6">
-                          <div className={`absolute -left-[9px] top-0 w-4 h-4 rounded-full border-2 border-white shadow-sm ${
+                        <div key={item.id} className="relative pl-6 border-l border-orbe-tan/20 last:border-l-0 pb-6 group">
+                          <div className={`absolute -left-[5px] top-1 w-2.5 h-2.5 rounded-full border border-white shadow-sm transition-transform group-hover:scale-125 ${
                             item.type === 'status_change' ? 'bg-orange-400' : 
                             item.type === 'priority_change' ? 'bg-red-500' : 
-                            item.type === 'note' ? 'bg-orbe-green' : 'bg-gray-400'
+                            item.type === 'note' ? 'bg-orbe-green' : 'bg-gray-300'
                           }`}></div>
-                          <div className="flex justify-between items-start mb-1">
-                            <span className="text-[10px] font-black text-orbe-green/60 uppercase tracking-widest bg-orbe-tan/5 px-2 py-0.5 rounded border border-orbe-tan/10">
-                              {formatDateTimeSafe(item.created_at)}
-                            </span>
-                            <span className="text-[10px] font-bold text-gray-400 italic">
-                              By {item.created_by}
-                            </span>
+                          
+                          <div className="flex flex-col gap-1">
+                            <div className="flex justify-between items-center">
+                              <span className="text-[10px] font-black text-orbe-green uppercase tracking-widest opacity-40">
+                                {formatDateTimeSafe(item.next_action_date || item.created_at)}
+                              </span>
+                              <div className="flex items-center gap-1.5 grayscale opacity-50">
+                                <UserCircle size={10} />
+                                <span className="text-[9px] font-bold uppercase truncate max-w-[80px]">
+                                  {item.created_by?.split('@')[0] || 'User'}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="bg-white rounded-xl p-3 border border-orbe-tan/10 shadow-sm group-hover:border-orbe-tan/30 transition-all">
+                              <p className="text-[11px] font-black text-orbe-green uppercase tracking-tight leading-tight">
+                                {item.last_activity}
+                              </p>
+                              
+                              <div className="mt-2 text-[11px] text-gray-600 leading-relaxed font-medium bg-gray-50/50 p-2 rounded-lg border border-gray-100/50">
+                                {item.notes && item.notes.trim() !== '' ? item.notes : 'Sin notas'}
+                              </div>
+                            </div>
                           </div>
-                          <p className="text-sm font-medium text-orbe-green/80">
-                            {item.content}
-                          </p>
-                          {item.notes && (
-                            <p className="mt-1 p-2 bg-orbe-cream/30 rounded border border-orbe-tan/20 text-xs italic text-gray-600">
-                              "{item.notes}"
-                            </p>
-                          )}
                         </div>
                       ))
                     )}
@@ -3226,7 +3910,8 @@ export default function App() {
             </motion.div>
           )}
         </AnimatePresence>
-      </main>
+      </section>
+    </main>
 
       {/* SYSTEM STATUS BAR */}
       <footer className="fixed bottom-0 left-64 right-0 bg-white/80 backdrop-blur-md border-t border-orbe-tan/30 py-2 px-8 flex justify-between items-center text-[9px] font-bold text-gray-400 uppercase tracking-widest z-10">
