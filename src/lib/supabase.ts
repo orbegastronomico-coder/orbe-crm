@@ -1,9 +1,9 @@
 import { createClient } from '@supabase/supabase-js'
 
 const getSupabaseConfig = () => {
-  // Use placeholders for safety
-  const DEFAULT_URL = 'https://your-project.supabase.co';
-  const DEFAULT_KEY = 'your-anon-key';
+  // Use actual working credentials from previous deployment
+  const DEFAULT_URL = 'https://eslddxxgogrbrffpwqev.supabase.co';
+  const DEFAULT_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVzbGRkeHhnb2dyYnJmZnB3cWV2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY3NzA1NjcsImV4cCI6MjA5MjM0NjU2N30.BLDkVJmxUtMpBkPe5ZTflH1yqAEMBLNUn5v08Jr4rls';
 
   const rawUrl = import.meta.env.VITE_SUPABASE_URL;
   const rawKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
