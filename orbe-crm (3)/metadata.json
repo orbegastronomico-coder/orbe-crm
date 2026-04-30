@@ -1,6 +1,0 @@
-{
-  "name": "OrBe CRM",
-  "description": "Corporate CRM with pipeline management, searchable database, and operational control panel.",
-  "requestFramePermissions": ["microphone"],
-  "majorCapabilities": []
-}
