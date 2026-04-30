@@ -12,7 +12,7 @@ import {
   Filter, MoreHorizontal, LogOut, Briefcase, Clock, CheckSquare,
   Settings, Save, XCircle, History, ArrowLeft, Loader2, Star,
   Mic, MicOff, Leaf, Eye, EyeOff, ShieldCheck, Target, Zap, ArrowUpDown,
-  Edit2
+  Edit2, AlertTriangle, Trash2, MessageSquare
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -74,7 +74,7 @@ interface Client {
   city?: string;
   postal_code?: string;
   notes?: string;
-  client_status?: 'Potential client' | 'Client' | 'Temporary Discarded';
+  client_type?: 'Potential client' | 'Client' | 'Temporary Discarded';
   created_at?: string;
 }
 
@@ -107,9 +107,9 @@ interface HistoryEntry {
 }
 
 const MOCK_CLIENTS: Client[] = [
-  { client_id: 1, company_name: 'Tech Solutions SL', contact_name: 'Ana García', lead_name: 'Lead Orbe A', email: 'ana@tech.com', phone: '600111222', mobile: '699000111', address_line_1: 'Calle Falsa 123', client_status: 'Potential client' },
-  { client_id: 2, company_name: 'Construcciones Orbe', contact_name: 'Luis Perez', lead_name: 'Lead Orbe B', email: 'luis@orbe.es', phone: '655333444', mobile: '688222333', address_line_1: 'Av. Principal 45', client_status: 'Client' },
-  { client_id: 3, company_name: 'Digital Marketing Inc', contact_name: 'Elena Rius', lead_name: 'Lead Orbe C', email: 'elena@dm.com', phone: '677888999', mobile: '611444555', address_line_1: 'Business Park B', client_status: 'Temporary Discarded' }
+  { client_id: 1, company_name: 'Tech Solutions SL', contact_name: 'Ana García', lead_name: 'Lead Orbe A', email: 'ana@tech.com', phone: '600111222', mobile: '699000111', address_line_1: 'Calle Falsa 123', client_type: 'Potential client' },
+  { client_id: 2, company_name: 'Construcciones Orbe', contact_name: 'Luis Perez', lead_name: 'Lead Orbe B', email: 'luis@orbe.es', phone: '655333444', mobile: '688222333', address_line_1: 'Av. Principal 45', client_type: 'Client' },
+  { client_id: 3, company_name: 'Digital Marketing Inc', contact_name: 'Elena Rius', lead_name: 'Lead Orbe C', email: 'elena@dm.com', phone: '677888999', mobile: '611444555', address_line_1: 'Business Park B', client_type: 'Temporary Discarded' }
 ];
 
 export default function App() {
@@ -162,6 +162,129 @@ export default function App() {
     }
   };
 
+  const [showDuplicateModal, setShowDuplicateModal] = useState(false);
+  const [duplicateMatch, setDuplicateMatch] = useState<Client | null>(null);
+  const [pendingPayload, setPendingPayload] = useState<any>(null);
+
+  const normalizeName = (name: string) => {
+    return (name || '').toLowerCase().replace(/[\s\-\.]/g, '');
+  };
+
+  const getLevenshteinDistance = (a: string, b: string): number => {
+    const matrix = Array.from({ length: a.length + 1 }, (_, i) => [i]);
+    for (let j = 1; j <= b.length; j++) matrix[0][j] = j;
+
+    for (let i = 1; i <= a.length; i++) {
+      for (let j = 1; j <= b.length; j++) {
+        const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j - 1] + cost
+        );
+      }
+    }
+    return matrix[a.length][b.length];
+  };
+
+  const calculateSimilarity = (a: string, b: string): number => {
+    const normA = normalizeName(a);
+    const normB = normalizeName(b);
+    if (normA === normB) return 1;
+    
+    const distance = getLevenshteinDistance(normA, normB);
+    const maxLength = Math.max(normA.length, normB.length);
+    return 1 - distance / maxLength;
+  };
+
+  const checkDuplicateClient = async (companyName: string): Promise<Client | null> => {
+    if (!supabase) return null;
+    
+    try {
+      const { data, error } = await supabase.from('clients').select('client_id, company_name').neq('client_type', 'deleted');
+      if (error) throw error;
+
+      for (const client of (data || [])) {
+        const similarity = calculateSimilarity(companyName, client.company_name);
+        if (similarity >= 0.8) {
+          return client as Client;
+        }
+      }
+    } catch (err) {
+      console.error("Error checking duplicates:", err);
+    }
+    return null;
+  };
+
+  const executeSaveClient = async (payload: any) => {
+    setIsSaving(true);
+    try {
+      if (!supabase) {
+        const newId = clients.length + 1;
+        setClients(prev => [...prev, { client_id: newId, ...payload } as any]);
+        alert('Demo Mode: Client saved locally');
+        setView('database');
+        return;
+      }
+
+      const { data: inserted, error } = await supabase.from('clients').insert([payload]).select();
+      if (error) throw error;
+      
+      if (inserted && inserted[0]) {
+        addHistoryEntry(inserted[0].client_id || inserted[0].id, 'system', 'Client registered in system');
+      }
+
+      alert('Client successfully registered in database');
+      fetchClients();
+      setView('database');
+    } catch (err: any) {
+      console.error(err);
+      alert('Error saving data: ' + err.message);
+    } finally {
+      setIsSaving(false);
+      setShowDuplicateModal(false);
+      setDuplicateMatch(null);
+      setPendingPayload(null);
+    }
+  };
+
+  const handleDeleteClient = async (clientId: string | number) => {
+    if (!clientId) {
+      alert("Error: Client ID is missing. Cannot delete.");
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      if (!supabase) {
+        setClients(prev => prev.filter(c => String(c.client_id) !== String(clientId) && String(c.id) !== String(clientId)));
+        alert('Demo Mode: Client removed locally');
+        setEditingClient(null);
+        return;
+      }
+
+      // Soft Delete: Update client_type to 'deleted'
+      const { error: error1 } = await supabase.from('clients').update({ client_type: 'deleted' }).eq('client_id', clientId);
+      
+      let finalError = error1;
+      if (error1) {
+        const { error: error2 } = await supabase.from('clients').update({ client_type: 'deleted' }).eq('id', clientId);
+        finalError = error2;
+      }
+
+      if (finalError) throw finalError;
+
+      alert(`Client ${clientId} moved to trash!`);
+      setEditingClient(null);
+      fetchClients();
+    } catch (err: any) {
+      console.error("Delete operation failed:", err);
+      alert('Error deleting client: ' + (err.message || String(err)));
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const handleLogout = async () => {
     if (!supabase) return;
     await supabase.auth.signOut();
@@ -180,7 +303,7 @@ export default function App() {
   const [newNote, setNewNote] = useState('');
   const [editingClient, setEditingClient] = useState<Client | null>(null);
   const [assignmentFilter, setAssignmentFilter] = useState<'all' | 'assigned' | 'unassigned'>('all');
-  const [statusFilter, setStatusFilter] = useState<'All' | 'Potential client' | 'Client' | 'Temporary Discarded'>('All');
+  const [statusFilter, setStatusFilter] = useState<'All' | 'Potential client' | 'Client' | 'Temporary Discarded'>('Potential client');
   const [taskToAccomplish, setTaskToAccomplish] = useState<PipelineItem | null>(null);
   const [postponeItem, setPostponeItem] = useState<PipelineItem | null>(null);
   const [editingItem, setEditingItem] = useState<PipelineItem | null>(null);
@@ -194,7 +317,9 @@ export default function App() {
   const [pipelineColumns, setPipelineColumns] = useState<string[]>([]);
   const [selectedActivityList, setSelectedActivityList] = useState<{ owner: string, days: number, items: PipelineItem[] } | null>(null);
   const [timelineSellerFilter, setTimelineSellerFilter] = useState<User>('All');
-  const [timelineTemperature, setTimelineTemperature] = useState<'Active' | 'Warning' | 'Cold'>('Active');
+  const [overviewOwnerFilter, setOverviewOwnerFilter] = useState<User>('All');
+  const [timelineTemperature, setTimelineTemperature] = useState<'Active' | 'Warning' | 'Cold'>('Cold');
+  const [showDeleteModal, setShowDeleteModal] = useState<string | number | null>(null);
 
   // Wizard estados para asignación
   const [assigningClient, setAssigningClient] = useState<Client | null>(null);
@@ -227,7 +352,7 @@ export default function App() {
 
   useEffect(() => {
     if (selectedClientForHistory) {
-      fetchClientHistory(selectedClientForHistory.id);
+      fetchClientHistory(selectedClientForHistory.client_id || (selectedClientForHistory as any).id);
     } else {
       setClientHistory([]);
     }
@@ -285,7 +410,8 @@ export default function App() {
       // 1. Cargar Clientes Maestros
       const { data: clientsData, error: clientsError } = await supabase
         .from('clients')
-        .select('*');
+        .select('*')
+        .neq('client_type', 'deleted');
       
       if (clientsError) throw clientsError;
 
@@ -324,15 +450,19 @@ export default function App() {
         city: c.city || c.Ciudad || '',
         postal_code: c.postal_code || c['Código postal'] || '',
         notes: c.notes || c.description || c.desc || c.Descripción || c.Descripcion || '',
-        client_status: c.client_status || 'Potential client',
+        client_type: c.client_type || c.client_status || c.status || c.Status || 'Potential client',
         created_at: c.created_at
       }));
 
       // Sanear Pipeline y vincular con compañía
-      const sanitizedPipeline = (pipelineData || []).map((p: any) => {
-        const cId = p.client_id || p.id_cliente || p.ID_CLIENTE || p.cliente_id;
-        const relatedClient = sanitizedClients.find(c => String(c.client_id) === String(cId));
-        const dbOwner = p.owner_id || p.owner || p.Owner || p.assigned_to || p.assigned_to_user || p.operador || p.dueño;
+      const sanitizedPipeline = (pipelineData || [])
+        .map((p: any) => {
+          const cId = p.client_id || p.id_cliente || p.ID_CLIENTE || p.cliente_id;
+          const relatedClient = sanitizedClients.find(c => String(c.client_id) === String(cId));
+          
+          if (!relatedClient && supabase) return null; // Filtrar items sin cliente (p.ej. eliminados)
+          
+          const dbOwner = p.owner_id || p.owner || p.Owner || p.assigned_to || p.assigned_to_user || p.operador || p.dueño;
         const dbPriority = p.priority || p.Priority || p.prioridad || 'Medium';
         const dbStatus = p.client_status || p.status || p.Status || p.estado || 'Pending';
 
@@ -353,7 +483,7 @@ export default function App() {
           id: p.id || p.ID || p.n || p.N,
           client_id: cId,
           company_name: relatedClient?.company_name || 'Cliente Desconocido',
-          client_status: relatedClient?.client_status || 'Potential client',
+          client_status: relatedClient?.client_type || 'Potential client',
           owner_id: (dbOwner || currentUser) as User,
           status: dbStatus,
           last_contact_date: lastContact,
@@ -365,7 +495,7 @@ export default function App() {
           action_status: dbActionStatus,
           created_at: dbCreatedAt
         };
-      });
+      }).filter((item): item is PipelineItem => item !== null);
       
       // Ordenar pipeline por fecha de acción
       sanitizedPipeline.sort((a, b) => {
@@ -464,87 +594,74 @@ export default function App() {
   };
 
   const fetchClientHistory = async (clientId: string | number) => {
+    if (!clientId) return;
     setLoadingHistory(true);
-    if (!supabase) {
-      setClientHistory([
-        { id: 1, client_id: clientId, type: 'system', content: 'Cliente creado en el sistema', created_at: new Date().toISOString(), created_by: 'System' },
-        { id: 2, client_id: clientId, type: 'note', content: 'Primera toma de contacto positiva.', created_at: new Date().toISOString(), created_by: 'Alejandro' }
-      ]);
-      setLoadingHistory(false);
-      return;
-    }
+    setClientHistory([]);
 
     try {
-      // Función auxiliar para intentar buscar por varias columnas posibles
-      const fetchRobust = async (table: string, idVal: string | number) => {
-        const columns = ['client_id', 'id_cliente', 'cliente_id', 'ID_CLIENTE'];
-        for (const col of columns) {
-          try {
-            const query = supabase.from(table).select('*').eq(col, idVal);
-            // Requerimiento: Ordenar por ID descendente para el historial
-            if (table === 'client_history') {
-              query.order('id', { ascending: false });
-            }
-            const { data, error } = await query;
-            if (!error) return data || [];
-          } catch (e) {
-            continue;
-          }
-        }
-        return [];
-      };
+      if (!supabase) {
+        console.warn("Supabase not initialized");
+        setLoadingHistory(false);
+        return;
+      }
 
-      // 1. Cargar desde client_history (Fuente principal de logs)
-      const histData = await fetchRobust('client_history', clientId);
-      const historyRecords: HistoryEntry[] = (histData || []).map(h => ({
-        id: h.id, // ID secuencial real
-        client_id: h.client_id,
-        type: h.type || 'note',
-        last_activity: h.last_activity || h.content || 'Acción sin detalle',
-        notes: h.notes || '',
-        next_action_date: h.next_action_date || h.created_at,
-        created_at: h.created_at,
-        created_by: h.created_by
+      // 1. Query Agresiva: Intentar por varios métodos para encontrar registros
+      let finalData: any[] = [];
+      
+      // Intento A: client_id como número (más común para IDs internos)
+      const { data: dataNum } = await supabase
+        .from('pipeline')
+        .select('*')
+        .eq('client_id', isNaN(Number(clientId)) ? -1 : Number(clientId))
+        .order('id', { ascending: false });
+      
+      if (dataNum && dataNum.length > 0) finalData = [...dataNum];
+      
+      // Intento B: client_id como string (por si el esquema varió)
+      const { data: dataStr } = await supabase
+        .from('pipeline')
+        .select('*')
+        .eq('client_id', String(clientId))
+        .order('id', { ascending: false });
+      
+      if (dataStr && dataStr.length > 0) {
+        // Unir evitando duplicados por ID físico
+        const existingIds = new Set(finalData.map(d => d.id));
+        dataStr.forEach(d => {
+          if (!existingIds.has(d.id)) finalData.push(d);
+        });
+      }
+
+      // Intento C: Por nombre de compañía si todavía no hay nada (fallback desesperado)
+      if (finalData.length === 0 && selectedClientForHistory?.company_name) {
+        const { data: dataCompany } = await supabase
+          .from('pipeline')
+          .select('*')
+          .eq('company_name', selectedClientForHistory.company_name)
+          .order('id', { ascending: false });
+        if (dataCompany && dataCompany.length > 0) finalData = dataCompany;
+      }
+
+      // 2. Mapeo de campos ultra-resiliente basado en las capturas reales de Supabase
+      const historyRecords: HistoryEntry[] = finalData.map((item, index) => ({
+        id: item.id || `hist-${index}`,
+        client_id: item.client_id || clientId,
+        type: 'note',
+        // Fallbacks: La imagen muestra last_contact_date, pero el usuario pidió last_activity
+        last_activity: item.last_activity || item.last_action || item.activity || item.last_contact_date || 'Actividad registrada',
+        // La imagen muestra la columna 'notes'
+        notes: item.notes || item.notas || '',
+        // Fechas
+        next_action_date: item.next_action_date || item.last_contact_date || item.created_at || new Date().toISOString(),
+        created_at: item.created_at || item.last_contact_date || new Date().toISOString(),
+        // Quién lo hizo
+        created_by: item.owner || item.assigned_to || item.owner_id || 'Sistema'
       }));
 
-      // 2. Cargar hitos de la tabla pipeline
-      const pipeData = await fetchRobust('pipeline', clientId);
-      
-      // Convertir registros de pipeline a formato de historial
-      const pipelineHistory: HistoryEntry[] = (pipeData || []).map(p => {
-        const cId = p.client_id || p.id_cliente || p.cliente_id || p.ID_CLIENTE || clientId;
-        const activity = p.last_activity || p.last_action || p.LastAction || p.accion || p.Activity || 'Seguimiento';
-        const notes = p.notes || p.notas || p.Notes || p.Observaciones || '';
-        const rawActionDate = p.next_action_date || p['actions date'] || p['Actions Date'] || p['action_date'] || p.fecha_accion || p.fecha_seguimiento || p.created_at;
-        const logicalDateBase = rawActionDate || p.created_at || p.updated_at || new Date().toISOString();
-        const parsed = parseFlexibleDate(logicalDateBase);
-        const logicalDate = parsed ? parsed.toISOString() : new Date().toISOString();
-        
-        return {
-          id: `pipe-${p.id}`,
-          client_id: cId,
-          type: 'system',
-          last_activity: `HITO: [${p.client_status || p.status || 'P'}] ${activity}`,
-          notes: notes,
-          next_action_date: logicalDate,
-          created_at: logicalDate, 
-          created_by: p.owner_id || p.owner || p.assigned_to || 'SISTEMA'
-        };
-      });
+      // Ordenar por ID descendente para que lo más nuevo en el pipeline (mayor ID) salga arriba
+      historyRecords.sort((a, b) => Number(b.id || 0) - Number(a.id || 0));
 
-      // Unificar y ordenar priorizando IDs numéricos descendentes
-      const unifiedHistory = [...historyRecords, ...pipelineHistory].sort((a, b) => {
-        // Si ambos son de la tabla client_history (ID numérico), usamos el ID
-        if (typeof a.id === 'number' && typeof b.id === 'number') {
-          return b.id - a.id;
-        }
-        // Si no, caemos a fecha
-        const dateA = a.next_action_date || a.created_at;
-        const dateB = b.next_action_date || b.created_at;
-        return new Date(dateB).getTime() - new Date(dateA).getTime();
-      });
-
-      setClientHistory(unifiedHistory);
+      setClientHistory(historyRecords);
     } catch (err) {
       console.error("Error crítico recuperando historial:", err);
     } finally {
@@ -573,9 +690,34 @@ export default function App() {
     if (!supabase) return;
 
     try {
-      await supabase.from('client_history').insert([entry]);
+      // 1. Guardar en client_history (si existe)
+      try {
+        await supabase.from('client_history').insert([entry]);
+      } catch (e) {
+        console.warn("Could not save to client_history, continuing...");
+      }
+
+      // 2. IMPORTANTÍSIMO: Guardar en 'pipeline' para que el nuevo Log (que lee de pipeline) lo vea
+      const pipelineEntry: any = {
+        client_id: clientId,
+        last_activity: last_activity,
+        notes: notes || '',
+        next_action_date: entry.next_action_date,
+        owner: entry.created_by,
+        action_status: 'Done' // Marcamos como Done para que no cree una nueva tarjeta en el tablero
+      };
+
+      // Si tenemos datos del cliente original, los incluimos para mantener integridad
+      const originalClient = clients.find(c => String(c.client_id) === String(clientId));
+      if (originalClient) {
+        pipelineEntry.company = originalClient.company_name;
+        pipelineEntry.client_status = originalClient.client_type;
+      }
+
+      await supabase.from('pipeline').insert([pipelineEntry]);
+      
     } catch (e) {
-      console.warn("Could not save to client_history:", e);
+      console.error("Error saving entry to pipeline:", e);
     }
   };
 
@@ -592,56 +734,90 @@ export default function App() {
       const originalClient = clients.find(c => String(c.id) === String(id));
       
       const dbUpdates: any = {};
+      
+      // We only use columns that are highly likely to exist based on common patterns
+      // avoiding 'Company', 'Adress', etc. which caused PGRST204 errors.
       if (updates.company_name !== undefined) dbUpdates.company_name = updates.company_name;
       if (updates.contact_name !== undefined) dbUpdates.contact_name = updates.contact_name;
       if (updates.lead_name !== undefined) dbUpdates.lead_name = updates.lead_name;
       if (updates.email !== undefined) dbUpdates.email = updates.email;
       if (updates.phone !== undefined) dbUpdates.phone = updates.phone;
       if (updates.mobile !== undefined) dbUpdates.mobile = updates.mobile;
-      if (updates.address_line_1 !== undefined) dbUpdates.address_line_1 = updates.address_line_1;
-      if (updates.notes !== undefined) dbUpdates.notes = updates.notes;
       
-      // Fallbacks para esquemas mixtos si es necesario (según el mapping)
-      if (updates.company_name !== undefined) dbUpdates.Company = updates.company_name;
-      if (updates.address_line_1 !== undefined) dbUpdates.Adress = updates.address_line_1;
-      if (updates.notes !== undefined) dbUpdates.Descripción = updates.notes;
+      const addr = (updates as any).address || updates.address_line_1;
+      if (addr !== undefined) {
+        // Try both common naming conventions but we'll catch errors if they fail
+        dbUpdates.address_line_1 = addr;
+      }
+
+      if (updates.notes !== undefined) {
+        dbUpdates.notes = updates.notes;
+      }
       
-      // Try both client_status and Status
-      if (updates.client_status !== undefined) {
-        dbUpdates.client_status = updates.client_status;
+      if (updates.client_type !== undefined) {
+        dbUpdates.client_type = updates.client_type;
+        // Some systems use 'status' or 'client_status', but we'll stick to client_type 
+        // as the user confirmed this is the one.
       }
       
       console.log("Supabase Update Attempt Payload:", dbUpdates);
       
-      const idColumns = ['client_id', 'ID', 'id', 'n', 'N', 'ID_CLIENTE'];
+      const idCols = ['client_id', 'id', 'ID'];
       let success = false;
       let lastError: any = null;
 
-      for (const col of idColumns) {
-        console.log(`Trying update with ID column: ${col}`);
-        try {
-          const { error } = await supabase.from('clients').update(dbUpdates).eq(col, id);
-          if (!error) {
-            console.log(`Update successful with column: ${col}`);
-            success = true;
-            break;
+      const idsToTry = [id, String(id)];
+      if (!isNaN(Number(id))) idsToTry.push(Number(id));
+      
+      const uniqueIds = Array.from(new Set(idsToTry));
+
+      for (const col of idCols) {
+        for (const targetId of uniqueIds) {
+          try {
+            const { data, error } = await supabase.from('clients')
+              .update(dbUpdates)
+              .eq(col, targetId)
+              .select();
+            
+            if (!error && data && data.length > 0) {
+              console.log(`Update SUCCESS with ${col}=${targetId}`);
+              success = true;
+              break;
+            }
+            if (error) {
+              lastError = error;
+              // If it's a column error, we might want to try a version without that column
+              // but for now we just log it and try next ID/Col
+              console.warn(`Update error with ${col}=${targetId}:`, error.message);
+            }
+          } catch (e) {
+            lastError = e;
           }
-          lastError = error;
-          console.warn(`Update failed with column ${col}:`, error);
-          if (error.code === 'PGRST204') continue;
-          break; 
-        } catch (e) {
-          lastError = e;
-          console.error(`Exception during update with column ${col}:`, e);
+        }
+        if (success) break;
+      }
+
+      // If multiple columns failed, it might be because one of the update fields is missing
+      // Let's try a fallback: only update the client_type if the first attempt failed
+      if (!success && updates.client_type) {
+        console.log("Full update failed. Trying to update ONLY client_type...");
+        for (const col of idCols) {
+          for (const targetId of uniqueIds) {
+            const { data, error } = await supabase.from('clients')
+              .update({ client_type: updates.client_type })
+              .eq(col, targetId)
+              .select();
+            if (!error && data && data.length > 0) {
+              success = true;
+              break;
+            }
+          }
+          if (success) break;
         }
       }
 
       if (!success) {
-        // Final attempt: maybe some columns don't exist? Try a "safe" update with only common columns
-        console.log("All ID columns failed or payload rejected. Trying safe update...");
-        const safeUpdates = { company_name: updates.company_name };
-        const { error: finalError } = await supabase.from('clients').update(safeUpdates).eq('client_id', id);
-        if (finalError) throw lastError || finalError;
+        throw lastError || new Error("Could not update client. No rows were affected.");
       }
       
       await fetchClients();
@@ -876,7 +1052,7 @@ export default function App() {
       // 2. Actualizar el status del cliente en la tabla 'clients'
       if (newStatus) {
         const clientIdCol = clients.length > 0 && Object.keys(clients[0]).includes('client_id') ? 'client_id' : 'id';
-        await supabase.from('clients').update({ client_status: newStatus }).eq(clientIdCol, prevItem.client_id);
+        await supabase.from('clients').update({ client_type: newStatus, client_status: newStatus }).eq(clientIdCol, prevItem.client_id);
       }
 
       // 3. Insertar el nuevo registro como 'Pending'
@@ -930,7 +1106,7 @@ export default function App() {
 
       // 2. Sincronizar el status del cliente en la tabla 'clients'
       const clientIdCol = clients.length > 0 && Object.keys(clients[0]).includes('client_id') ? 'client_id' : 'id';
-      const clientUpdates: any = { client_status: updates.status };
+      const clientUpdates: any = { client_type: updates.status, client_status: updates.status };
       if (clients.length > 0 && Object.keys(clients[0]).includes('status')) clientUpdates.status = updates.status;
 
       const { error: clientError } = await supabase.from('clients').update(clientUpdates).eq(clientIdCol, clientId);
@@ -1126,7 +1302,7 @@ export default function App() {
     
     recognition.onresult = (event: any) => {
       const transcript = Array.from(event.results)
-        .map((result: any) => result[0])
+        .map((result: any) => result && result[0] ? result[0] : { transcript: '' })
         .map((result: any) => result.transcript)
         .join('');
       
@@ -1279,7 +1455,7 @@ export default function App() {
     );
 
     if (statusFilter !== 'All') {
-      result = result.filter(c => c.client_status === statusFilter);
+      result = result.filter(c => c.client_type === statusFilter);
     }
 
     if (assignmentFilter === 'assigned') {
@@ -1528,7 +1704,7 @@ export default function App() {
                           }`}
                         >
                           <div className={`w-10 h-10 rounded-full flex items-center justify-center text-lg font-black ${assigningOwner === name ? 'bg-white text-orbe-green' : 'bg-orbe-green/10 text-orbe-green'}`}>
-                            {name[0]}
+                            {(name || '?')[0]}
                           </div>
                           <span className="font-bold text-sm tracking-tight">{name.toUpperCase()}</span>
                         </button>
@@ -1766,6 +1942,7 @@ export default function App() {
                       mobile: newClientForm.mobile || '',
                       address_line_1: newClientForm.address_line_1 || '',
                       notes: newClientForm.notes || '',
+                      client_type: 'Potential client',
                       client_status: 'Potential client'
                     };
 
@@ -1778,34 +1955,21 @@ export default function App() {
                     }
 
                     try {
-                      // Validación de duplicados
-                      const { data: existingRecords, error: checkError } = await supabase
-                        .from('clients')
-                        .select('*')
-                        .eq('company_name', payload.company_name);
+                      // 1. Verificación de Duplicados (Fuzzy Match / Normalización)
+                      const potentialDuplicate = await checkDuplicateClient(companyName);
                       
-                      if (checkError) throw checkError;
-                      
-                      if (existingRecords && existingRecords.length > 0) {
-                        const existing = existingRecords[0];
-                        const foundId = existing.client_id || existing.id || existing.ID || existing.n || existing.N || '?';
-                        alert(`User already exists, check ID: ${foundId}`);
-                        return;
+                      if (potentialDuplicate) {
+                        setDuplicateMatch(potentialDuplicate);
+                        setPendingPayload(payload);
+                        setShowDuplicateModal(true);
+                        return; // Detenemos el flujo inicial hasta confirmación
                       }
 
-                      const { data: inserted, error } = await supabase.from('clients').insert([payload]).select();
-                      if (error) throw error;
-                      
-                      if (inserted && inserted[0]) {
-                        addHistoryEntry(inserted[0].client_id || inserted[0].id, 'system', 'Client registered in system');
-                      }
-
-                      alert('Client successfully registered in database');
-                      fetchClients();
-                      setView('database');
+                      // 2. Proceder con el guardado si no hay duplicados sospechosos
+                      await executeSaveClient(payload);
                     } catch (err) {
                       console.error(err);
-                      alert('Error saving data.');
+                      alert('Error processing request.');
                     }
                   }} className="p-8 space-y-6">
                     <div className="grid grid-cols-2 gap-4">
@@ -1957,14 +2121,14 @@ export default function App() {
                       onChange={(e) => setSearchTerm(e.target.value)}
                     />
                   </div>
-                  <div className="flex gap-2">
-                    <div className="flex-1 flex items-center gap-3 bg-orbe-green border border-orbe-green px-4 py-2 rounded-xl shadow-lg shadow-orbe-green/20 transition-all">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:flex lg:flex-wrap gap-2 w-full lg:w-auto">
+                    <div className="flex items-center gap-3 bg-orbe-green border border-orbe-green px-4 py-2 rounded-xl shadow-lg shadow-orbe-green/20 transition-all">
                       <ArrowUpDown size={14} className="text-white opacity-70" />
                       <span className="text-[9px] font-black text-white/60 uppercase tracking-widest border-r border-white/20 pr-3 hidden md:inline">Order by:</span>
                       <select 
                         value={sortBy} 
                         onChange={(e) => setSortBy(e.target.value as any)}
-                        className="flex-1 md:flex-none text-[10px] font-black text-white uppercase tracking-wider outline-none bg-transparent cursor-pointer"
+                        className="flex-1 lg:flex-none text-[10px] font-black text-white uppercase tracking-wider outline-none bg-transparent cursor-pointer"
                       >
                         <option value="priority" className="bg-orbe-green text-white">PRIORITY</option>
                         <option value="action_date" className="bg-orbe-green text-white">ACTION DATE</option>
@@ -1972,13 +2136,13 @@ export default function App() {
                       </select>
                     </div>
 
-                    <div className="flex-1 flex items-center gap-3 bg-orbe-green border border-orbe-green px-4 py-2 rounded-xl shadow-lg shadow-orbe-green/20 transition-all">
+                    <div className="flex items-center gap-3 bg-orbe-green border border-orbe-green px-4 py-2 rounded-xl shadow-lg shadow-orbe-green/20 transition-all">
                       <Users size={14} className="text-white opacity-70" />
                       <span className="text-[9px] font-black text-white/60 uppercase tracking-widest border-r border-white/20 pr-3 hidden md:inline">Owner:</span>
                       <select 
                         value={currentUser} 
                         onChange={(e) => setCurrentUser(e.target.value as User)}
-                        className="flex-1 md:flex-none text-[10px] font-black text-white uppercase tracking-wider outline-none bg-transparent cursor-pointer"
+                        className="flex-1 lg:flex-none text-[10px] font-black text-white uppercase tracking-wider outline-none bg-transparent cursor-pointer"
                       >
                         {USERS.map(u => (
                           <option key={u} value={u} className="bg-orbe-green text-white">{u.toUpperCase()}</option>
@@ -1986,13 +2150,13 @@ export default function App() {
                       </select>
                     </div>
 
-                    <div className="flex-1 flex items-center gap-3 bg-orbe-green border border-orbe-green px-4 py-2 rounded-xl shadow-lg shadow-orbe-green/20 transition-all">
+                    <div className="sm:col-span-2 lg:col-span-1 lg:flex-1 flex items-center gap-3 bg-orbe-green border border-orbe-green px-4 py-2 rounded-xl shadow-lg shadow-orbe-green/20 transition-all">
                       <Filter size={14} className="text-white opacity-70" />
                       <span className="text-[9px] font-black text-white/60 uppercase tracking-widest border-r border-white/20 pr-3 hidden md:inline">Status:</span>
                       <select 
                         value={statusFilter} 
                         onChange={(e) => setStatusFilter(e.target.value as any)}
-                        className="flex-1 md:flex-none text-[10px] font-black text-white uppercase tracking-wider outline-none bg-transparent cursor-pointer"
+                        className="flex-1 lg:flex-none text-[10px] font-black text-white uppercase tracking-wider outline-none bg-transparent cursor-pointer"
                       >
                         <option value="All" className="bg-orbe-green text-white">ALL STATUS</option>
                         <option value="Potential client" className="bg-orbe-green text-white">POTENTIAL</option>
@@ -2008,7 +2172,6 @@ export default function App() {
                   <table className="w-full text-left border-collapse hidden md:table">
                     <thead className="bg-[#fcfaf7] border-b border-orbe-tan/30 sticky top-0 z-10 whitespace-nowrap">
                       <tr>
-                        <th className="p-2 text-[10px] font-bold text-gray-400 uppercase tracking-widest w-16">ID</th>
                         <th className="p-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Company</th>
                         <th className="p-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Owner</th>
                         <th className="p-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Action Date</th>
@@ -2031,7 +2194,6 @@ export default function App() {
                       ) : (
                         userPipeline.map(item => (
                           <tr key={item.id} className="hover:bg-orbe-cream/30 transition-colors">
-                            <td className="p-2 font-mono text-[10px] text-gray-400">#{item.client_id}</td>
                             <td className="px-3 py-2">
                               <div className="font-bold text-orbe-green">{item.company_name}</div>
                             </td>
@@ -2103,7 +2265,17 @@ export default function App() {
                               </td>
                             <td className="p-3 text-center">
                               <button 
-                                onClick={() => setSelectedClientForHistory(clients.find(c => String(c.client_id) === String(item.client_id)) || null)}
+                                onClick={() => {
+                                  const targetClient = clients.find(c => String(c.client_id) === String(item.client_id));
+                                  if (targetClient) {
+                                    setSelectedClientForHistory(targetClient);
+                                  } else {
+                                    setSelectedClientForHistory({
+                                      client_id: item.client_id,
+                                      company_name: item.company_name || 'Desconocido',
+                                    } as any);
+                                  }
+                                }}
                                 className="p-2 bg-orbe-tan/10 text-orbe-green rounded-lg hover:bg-orbe-tan/30 transition-all shadow-sm"
                                 title="Interaction Log"
                               >
@@ -2295,7 +2467,7 @@ export default function App() {
                           <div key={`priorities-${owner}`} className="bg-white rounded-2xl shadow-sm border border-orbe-tan/50 overflow-hidden flex flex-col">
                             <div className="p-4 border-b border-orbe-tan/30 bg-orbe-green/5 flex items-center gap-3">
                               <div className="w-10 h-10 rounded-full bg-orbe-green flex items-center justify-center text-white font-black text-sm shadow-sm">
-                                {owner[0]}
+                                {(owner || '?')[0]}
                               </div>
                               <div>
                                 <h4 className="text-sm font-black text-orbe-green uppercase tracking-tight">{owner}</h4>
@@ -2359,226 +2531,253 @@ export default function App() {
 
                 {dashboardTab === 'overview' && (
                   <div className="space-y-8 animate-in fade-in duration-500 pb-20">
-                    {/* 1. SECCIÓN VISUAL - MÉTRICAS CRÍTICAS COMPACTAS CON TENDENCIA */}
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                      {/* Total Overdue */}
-                      <div className="bg-white p-5 rounded-2xl border border-orbe-tan/30 shadow-sm flex flex-col items-start justify-center gap-2 relative overflow-hidden group">
-                        <div className="absolute -right-2 -bottom-2 w-16 h-16 bg-red-50 rounded-full blur-xl group-hover:bg-red-100 transition-all" />
-                        <div className="p-2 bg-red-50 text-red-500 rounded-xl">
-                          <Clock size={16} />
-                        </div>
-                        <div>
-                          <h3 className="text-2xl font-black text-orbe-green leading-none">
-                            {pipeline.filter(p => isOverdue(p.next_action_date) && String(p.action_status || '').trim().toLowerCase() !== 'done').length}
-                          </h3>
-                          <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mt-1">Actions Overdue</p>
-                        </div>
+                    {/* FILTER SECTION */}
+                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-4 rounded-2xl border border-orbe-tan/30 shadow-sm">
+                      <div>
+                        <h4 className="text-sm font-black text-orbe-green uppercase tracking-tight">Performance Overview</h4>
+                        <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mt-0.5">Global analytics and priority tracking</p>
                       </div>
-
-                      {/* Scheduled Today */}
-                      <div className="bg-white p-5 rounded-2xl border border-orbe-tan/30 shadow-sm flex flex-col items-start justify-center gap-2 relative overflow-hidden group">
-                        <div className="absolute -right-2 -bottom-2 w-16 h-16 bg-blue-50 rounded-full blur-xl group-hover:bg-blue-100 transition-all" />
-                        <div className="p-2 bg-blue-50 text-blue-500 rounded-xl">
-                          <Calendar size={16} />
-                        </div>
-                        <div>
-                          <h3 className="text-2xl font-black text-orbe-green leading-none">
-                            {pipeline.filter(p => {
-                              const date = parseFlexibleDate(p.next_action_date);
-                              if (!date) return false;
-                              const today = new Date();
-                              return date.getDate() === today.getDate() && date.getMonth() === today.getMonth() && date.getFullYear() === today.getFullYear() && String(p.action_status || '').trim().toLowerCase() !== 'done';
-                            }).length}
-                          </h3>
-                          <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mt-1">Actions Today</p>
-                        </div>
-                      </div>
-
-                      {/* Postponed (Last Week) */}
-                      <div className="bg-white p-5 rounded-2xl border border-orbe-tan/30 shadow-sm flex flex-col items-start justify-center gap-2 relative overflow-hidden group">
-                        <div className="absolute -right-2 -bottom-2 w-16 h-16 bg-amber-50 rounded-full blur-xl group-hover:bg-amber-100 transition-all" />
-                        <div className="p-2 bg-amber-50 text-amber-500 rounded-xl">
-                          <History size={16} />
-                        </div>
-                        <div>
-                          <h3 className="text-2xl font-black text-orbe-green leading-none">
-                            {pipeline.filter(p => {
-                              const d = parseFlexibleDate(p.updated_at || p.created_at);
-                              const limit = new Date();
-                              limit.setDate(limit.getDate() - 7);
-                              return d && d >= limit && (String(p.action_status || '').toLowerCase().includes('postpone'));
-                            }).length}
-                          </h3>
-                          <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mt-1">Recently Postponed</p>
-                        </div>
-                      </div>
-
-                      {/* High Priority Pending */}
-                      <div className="bg-white p-5 rounded-2xl border border-orbe-tan/30 shadow-sm flex flex-col items-start justify-center gap-2 relative overflow-hidden group">
-                        <div className="absolute -right-2 -bottom-2 w-16 h-16 bg-orbe-green/5 rounded-full blur-xl group-hover:bg-orbe-green/10 transition-all" />
-                        <div className="p-2 bg-orbe-green/10 text-orbe-green rounded-xl">
-                          <Star size={16} />
-                        </div>
-                        <div>
-                          <h3 className="text-2xl font-black text-orbe-green leading-none">
-                            {pipeline.filter(p => (p.priority === 'Urgent' || p.priority === 'High') && String(p.action_status || '').trim().toLowerCase() !== 'done').length}
-                          </h3>
-                          <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mt-1">Critical Tasks</p>
-                        </div>
+                      <div className="flex p-1 bg-gray-100 rounded-xl gap-1 w-full md:w-auto">
+                        {USERS.map(user => (
+                          <button 
+                            key={`overview-filter-${user}`}
+                            onClick={() => setOverviewOwnerFilter(user)}
+                            className={`flex-1 md:flex-none px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${overviewOwnerFilter === user ? 'bg-orbe-green text-white shadow-sm' : 'text-orbe-green/40 hover:text-orbe-green/60'}`}
+                          >
+                            {user}
+                          </button>
+                        ))}
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                      {/* TOP PRIORITIES TODAY */}
-                      <div className="bg-white rounded-3xl border border-orbe-tan/30 shadow-sm overflow-hidden flex flex-col">
-                        <div className="p-5 border-b border-orbe-tan/20 flex justify-between items-center bg-gray-50/50">
-                          <div>
-                            <h4 className="text-xs font-black text-orbe-green uppercase tracking-widest">Focus List: Today</h4>
-                            <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Immediate action required</p>
+                    {/* 1. SECCIÓN VISUAL - MÉTRICAS CRÍTICAS COMPACTAS CON TENDENCIA */}
+                    {(() => {
+                      const filteredPipeline = pipeline.filter(p => overviewOwnerFilter === 'All' || p.owner_id === overviewOwnerFilter);
+                      
+                      return (
+                        <>
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                          {/* Total Overdue */}
+                          <div className="bg-white p-5 rounded-2xl border border-orbe-tan/30 shadow-sm flex flex-col items-start justify-center gap-2 relative overflow-hidden group">
+                            <div className="absolute -right-2 -bottom-2 w-16 h-16 bg-red-50 rounded-full blur-xl group-hover:bg-red-100 transition-all" />
+                            <div className="p-2 bg-red-50 text-red-500 rounded-xl">
+                              <Clock size={16} />
+                            </div>
+                            <div>
+                              <h3 className="text-2xl font-black text-orbe-green leading-none">
+                                {filteredPipeline.filter(p => isOverdue(p.next_action_date) && String(p.action_status || '').trim().toLowerCase() !== 'done').length}
+                              </h3>
+                              <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mt-1">Actions Overdue</p>
+                            </div>
                           </div>
-                          <Target size={18} className="text-red-500" />
+
+                          {/* Scheduled Today */}
+                          <div className="bg-white p-5 rounded-2xl border border-orbe-tan/30 shadow-sm flex flex-col items-start justify-center gap-2 relative overflow-hidden group">
+                            <div className="absolute -right-2 -bottom-2 w-16 h-16 bg-blue-50 rounded-full blur-xl group-hover:bg-blue-100 transition-all" />
+                            <div className="p-2 bg-blue-50 text-blue-500 rounded-xl">
+                              <Calendar size={16} />
+                            </div>
+                            <div>
+                              <h3 className="text-2xl font-black text-orbe-green leading-none">
+                                {filteredPipeline.filter(p => {
+                                  const date = parseFlexibleDate(p.next_action_date);
+                                  if (!date) return false;
+                                  const today = new Date();
+                                  return date.getDate() === today.getDate() && date.getMonth() === today.getMonth() && date.getFullYear() === today.getFullYear() && String(p.action_status || '').trim().toLowerCase() !== 'done';
+                                }).length}
+                              </h3>
+                              <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mt-1">Actions Today</p>
+                            </div>
+                          </div>
+
+                          {/* Postponed (Last Week) */}
+                          <div className="bg-white p-5 rounded-2xl border border-orbe-tan/30 shadow-sm flex flex-col items-start justify-center gap-2 relative overflow-hidden group">
+                            <div className="absolute -right-2 -bottom-2 w-16 h-16 bg-amber-50 rounded-full blur-xl group-hover:bg-amber-100 transition-all" />
+                            <div className="p-2 bg-amber-50 text-amber-500 rounded-xl">
+                              <History size={16} />
+                            </div>
+                            <div>
+                              <h3 className="text-2xl font-black text-orbe-green leading-none">
+                                {filteredPipeline.filter(p => {
+                                  const d = parseFlexibleDate(p.updated_at || p.created_at);
+                                  const limit = new Date();
+                                  limit.setDate(limit.getDate() - 7);
+                                  return d && d >= limit && (String(p.action_status || '').toLowerCase().includes('postpone'));
+                                }).length}
+                              </h3>
+                              <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mt-1">Recently Postponed</p>
+                            </div>
+                          </div>
+
+                          {/* High Priority Pending */}
+                          <div className="bg-white p-5 rounded-2xl border border-orbe-tan/30 shadow-sm flex flex-col items-start justify-center gap-2 relative overflow-hidden group">
+                            <div className="absolute -right-2 -bottom-2 w-16 h-16 bg-orbe-green/5 rounded-full blur-xl group-hover:bg-orbe-green/10 transition-all" />
+                            <div className="p-2 bg-orbe-green/10 text-orbe-green rounded-xl">
+                              <Star size={16} />
+                            </div>
+                            <div>
+                              <h3 className="text-2xl font-black text-orbe-green leading-none">
+                                {filteredPipeline.filter(p => (p.priority === 'Urgent' || p.priority === 'High') && String(p.action_status || '').trim().toLowerCase() !== 'done').length}
+                              </h3>
+                              <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mt-1">Critical Tasks</p>
+                            </div>
+                          </div>
                         </div>
-                        <div className="divide-y divide-orbe-tan/10 overflow-y-auto max-h-[300px]">
-                          {pipeline
-                            .filter(p => {
-                              const d = parseFlexibleDate(p.next_action_date);
-                              const today = new Date();
-                              return d && d <= today && String(p.action_status || '').trim().toLowerCase() !== 'done';
-                            })
-                            .sort((a, b) => (PRIORITIES[a.priority as Priority] || 999) - (PRIORITIES[b.priority as Priority] || 999))
-                            .slice(0, 10)
-                            .map(item => (
-                              <div key={`prio-item-${item.id}`} className="p-4 hover:bg-orbe-cream/20 transition-all flex items-center justify-between group">
-                                <div className="flex items-center gap-3">
-                                  <div className={`w-1 h-8 rounded-full ${item.priority === 'Urgent' ? 'bg-red-500' : item.priority === 'High' ? 'bg-orange-500' : 'bg-blue-400'}`} />
-                                  <div>
-                                    <p className="font-bold text-orbe-green text-sm group-hover:translate-x-1 transition-transform">{item.company_name}</p>
-                                    <p className="text-[10px] text-gray-500 font-medium italic truncate max-w-[200px]">{item.last_activity}</p>
+
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                          {/* TOP PRIORITIES TODAY */}
+                          <div className="bg-white rounded-3xl border border-orbe-tan/30 shadow-sm overflow-hidden flex flex-col">
+                            <div className="p-5 border-b border-orbe-tan/20 flex justify-between items-center bg-gray-50/50">
+                              <div>
+                                <h4 className="text-xs font-black text-orbe-green uppercase tracking-widest">Focus List: Today</h4>
+                                <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Immediate action required</p>
+                              </div>
+                              <Target size={18} className="text-red-500" />
+                            </div>
+                            <div className="divide-y divide-orbe-tan/10 overflow-y-auto max-h-[300px]">
+                              {filteredPipeline
+                                .filter(p => {
+                                  const d = parseFlexibleDate(p.next_action_date);
+                                  const today = new Date();
+                                  return d && d <= today && String(p.action_status || '').trim().toLowerCase() !== 'done';
+                                })
+                                .sort((a, b) => (PRIORITIES[a.priority as Priority] || 999) - (PRIORITIES[b.priority as Priority] || 999))
+                                .slice(0, 10)
+                                .map(item => (
+                                  <div key={`prio-item-${item.id}`} className="p-4 hover:bg-orbe-cream/20 transition-all flex items-center justify-between group">
+                                    <div className="flex items-center gap-3">
+                                      <div className={`w-1 h-8 rounded-full ${item.priority === 'Urgent' ? 'bg-red-500' : item.priority === 'High' ? 'bg-orange-500' : 'bg-blue-400'}`} />
+                                      <div>
+                                        <p className="font-bold text-orbe-green text-sm group-hover:translate-x-1 transition-transform">{item.company_name}</p>
+                                        <p className="text-[10px] text-gray-500 font-medium italic truncate max-w-[200px]">{item.last_activity}</p>
+                                      </div>
+                                    </div>
+                                    <div className="text-right">
+                                      <p className="text-[10px] font-black text-orbe-green uppercase tracking-tighter">{item.owner_id}</p>
+                                      <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded ${isOverdue(item.next_action_date) ? 'bg-red-500 text-white' : 'bg-gray-100 text-gray-400'}`}>
+                                        {isOverdue(item.next_action_date) ? 'Overdue' : 'Today'}
+                                      </span>
+                                    </div>
+                                  </div>
+                                ))}
+                              {filteredPipeline.filter(p => {
+                                const d = parseFlexibleDate(p.next_action_date);
+                                const today = new Date();
+                                return d && d <= today && String(p.action_status || '').trim().toLowerCase() !== 'done';
+                              }).length === 0 && (
+                                <div className="p-10 text-center text-gray-400 italic text-sm">No tasks pending for today. Smooth day ahead!</div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* PIPELINE HEALTH & DISTRIBUTION */}
+                          <div className="bg-white rounded-3xl border border-orbe-tan/30 shadow-sm overflow-hidden flex flex-col p-6 space-y-6">
+                            <div>
+                              <h4 className="text-xs font-black text-orbe-green uppercase tracking-widest mb-1">Pipeline Health</h4>
+                              <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Efficiency & progress distribution</p>
+                            </div>
+                            
+                            <div className="grid grid-cols-2 gap-4">
+                              <div className="p-4 bg-[#F2F9F2] rounded-2xl border border-[#E0F2E0]">
+                                <p className="text-[9px] font-bold text-[#3D7A3C] uppercase tracking-widest mb-1">Conversion Potential</p>
+                                <h5 className="text-2xl font-black text-[#3D7A3C]">{filteredPipeline.filter(p => p.status === 'Potential client').length}</h5>
+                                <p className="text-[8px] text-[#3D7A3C]/70 mt-1 italic">Active prospects awaiting follow-up</p>
+                              </div>
+                              <div className="p-4 bg-orange-50 rounded-2xl border border-orange-100">
+                                <p className="text-[9px] font-bold text-orange-600 uppercase tracking-widest mb-1">Active Deals</p>
+                                <h5 className="text-2xl font-black text-orange-600">{filteredPipeline.filter(p => p.status === 'Client').length}</h5>
+                                <p className="text-[8px] text-orange-600/70 mt-1 italic">Ongoing managed accounts</p>
+                              </div>
+                            </div>
+
+                            <div className="space-y-4">
+                              <div className="flex justify-between items-end">
+                                <h5 className="text-[10px] font-black text-orbe-green uppercase">Action Status Distribution</h5>
+                              </div>
+                              <div className="h-4 flex rounded-full overflow-hidden shadow-inner bg-gray-100">
+                                {[
+                                  { label: 'Done', color: 'bg-orbe-green', count: filteredPipeline.filter(p => String(p.action_status || '').toLowerCase() === 'done').length },
+                                  { label: 'Pending', color: 'bg-blue-400', count: filteredPipeline.filter(p => String(p.action_status || '').toLowerCase() === 'pending' || !p.action_status).length },
+                                  { label: 'Postponed', color: 'bg-amber-400', count: filteredPipeline.filter(p => String(p.action_status || '').toLowerCase().includes('postpone')).length }
+                                ].map(seg => {
+                                  const pct = filteredPipeline.length > 0 ? (seg.count / filteredPipeline.length) * 100 : 0;
+                                  return (
+                                    <div 
+                                      key={seg.label}
+                                      title={`${seg.label}: ${seg.count}`}
+                                      style={{ width: `${pct}%` }} 
+                                      className={`${seg.color} transition-all border-r border-white/20 last:border-0`} 
+                                    />
+                                  );
+                                })}
+                              </div>
+                              <div className="flex gap-4">
+                                <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-orbe-green" /><span className="text-[8px] font-bold text-gray-500 uppercase">Done</span></div>
+                                <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-blue-400" /><span className="text-[8px] font-bold text-gray-500 uppercase">Pending</span></div>
+                                <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-amber-400" /><span className="text-[8px] font-bold text-gray-500 uppercase">Postponed</span></div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* 2. NEXT 7 DAYS TIMELINE (FILTERED) */}
+                        <div className="bg-white p-6 rounded-3xl border border-orbe-tan/30 shadow-sm relative overflow-hidden">
+                          {/* Decor sutil */}
+                          <div className="absolute top-0 right-0 w-32 h-32 bg-orbe-tan/5 rounded-bl-full -mr-16 -mt-16" />
+                          
+                          <div className="flex items-center justify-between mb-6 relative z-10">
+                            <div>
+                              <h4 className="text-sm font-black text-orbe-green uppercase tracking-tight">Timeline: Next 7 Days</h4>
+                              <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Scheduled activity distribution</p>
+                            </div>
+                            <div className="px-3 py-1 bg-orbe-green/5 rounded-full border border-orbe-tan/20 flex items-center gap-2">
+                              <div className="w-2 h-2 rounded-full bg-orbe-green animate-pulse" />
+                              <span className="text-[8px] font-black text-orbe-green uppercase">Live Calendar View</span>
+                            </div>
+                          </div>
+                          
+                          <div className="grid grid-cols-7 gap-3 relative z-10">
+                            {Array.from({ length: 7 }).map((_, i) => {
+                              const date = new Date();
+                              date.setDate(date.getDate() + i);
+                              const isToday = i === 0;
+                              const dayName = date.toLocaleDateString('en-US', { weekday: 'short' });
+                              const dayNum = date.getDate();
+                              
+                              const count = filteredPipeline.filter(p => {
+                                const d = parseFlexibleDate(p.next_action_date);
+                                return d && d.getDate() === dayNum && d.getMonth() === date.getMonth() && d.getFullYear() === date.getFullYear() && String(p.action_status || '').trim().toLowerCase() !== 'done';
+                              }).length;
+
+                              const maxCount = 10; 
+                              const height = Math.min(100, (count / maxCount) * 100);
+
+                              return (
+                                <div key={`timeline-${i}`} className="flex flex-col items-center gap-3 group">
+                                  <div className="flex-1 w-full bg-gray-50 rounded-xl relative overflow-hidden min-h-[140px] border border-gray-100 flex flex-col justify-end p-1 hover:border-orbe-tan/30 transition-all">
+                                    <motion.div 
+                                      initial={{ height: 0 }}
+                                      animate={{ height: `${height}%` }}
+                                      className={`w-full rounded-lg transition-all ${isToday ? 'bg-orbe-green shadow-lg shadow-orbe-green/20' : 'bg-orbe-tan/40'}`}
+                                    />
+                                    {count > 0 && (
+                                      <div className="absolute inset-0 flex items-center justify-center">
+                                        <span className={`text-sm font-black ${isToday ? 'text-white' : 'text-orbe-green'} drop-shadow-sm`}>{count}</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                  <div className="text-center group-hover:scale-110 transition-transform">
+                                    <p className={`text-[8px] font-black uppercase tracking-widest ${isToday ? 'text-orbe-green' : 'text-gray-400'}`}>{dayName}</p>
+                                    <p className={`text-[10px] font-black ${isToday ? 'text-orbe-green font-black scale-110' : 'text-gray-600'}`}>{dayNum}</p>
                                   </div>
                                 </div>
-                                <div className="text-right">
-                                  <p className="text-[10px] font-black text-orbe-green uppercase tracking-tighter">{item.owner_id}</p>
-                                  <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded ${isOverdue(item.next_action_date) ? 'bg-red-500 text-white' : 'bg-gray-100 text-gray-400'}`}>
-                                    {isOverdue(item.next_action_date) ? 'Overdue' : 'Today'}
-                                  </span>
-                                </div>
-                              </div>
-                            ))}
-                          {pipeline.filter(p => {
-                            const d = parseFlexibleDate(p.next_action_date);
-                            const today = new Date();
-                            return d && d <= today && String(p.action_status || '').trim().toLowerCase() !== 'done';
-                          }).length === 0 && (
-                            <div className="p-10 text-center text-gray-400 italic text-sm">No tasks pending for today. Smooth day ahead!</div>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* PIPELINE HEALTH & DISTRIBUTION */}
-                      <div className="bg-white rounded-3xl border border-orbe-tan/30 shadow-sm overflow-hidden flex flex-col p-6 space-y-6">
-                        <div>
-                          <h4 className="text-xs font-black text-orbe-green uppercase tracking-widest mb-1">Pipeline Health</h4>
-                          <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Efficiency & progress distribution</p>
-                        </div>
-                        
-                        <div className="grid grid-cols-2 gap-4">
-                          <div className="p-4 bg-[#F2F9F2] rounded-2xl border border-[#E0F2E0]">
-                            <p className="text-[9px] font-bold text-[#3D7A3C] uppercase tracking-widest mb-1">Conversion Potential</p>
-                            <h5 className="text-2xl font-black text-[#3D7A3C]">{pipeline.filter(p => p.status === 'Potential client').length}</h5>
-                            <p className="text-[8px] text-[#3D7A3C]/70 mt-1 italic">Active prospects awaiting follow-up</p>
-                          </div>
-                          <div className="p-4 bg-orange-50 rounded-2xl border border-orange-100">
-                            <p className="text-[9px] font-bold text-orange-600 uppercase tracking-widest mb-1">Active Deals</p>
-                            <h5 className="text-2xl font-black text-orange-600">{pipeline.filter(p => p.status === 'Client').length}</h5>
-                            <p className="text-[8px] text-orange-600/70 mt-1 italic">Ongoing managed accounts</p>
-                          </div>
-                        </div>
-
-                        <div className="space-y-4">
-                          <div className="flex justify-between items-end">
-                            <h5 className="text-[10px] font-black text-orbe-green uppercase">Action Status Distribution</h5>
-                          </div>
-                          <div className="h-4 flex rounded-full overflow-hidden shadow-inner bg-gray-100">
-                            {[
-                              { label: 'Done', color: 'bg-orbe-green', count: pipeline.filter(p => String(p.action_status || '').toLowerCase() === 'done').length },
-                              { label: 'Pending', color: 'bg-blue-400', count: pipeline.filter(p => String(p.action_status || '').toLowerCase() === 'pending' || !p.action_status).length },
-                              { label: 'Postponed', color: 'bg-amber-400', count: pipeline.filter(p => String(p.action_status || '').toLowerCase().includes('postpone')).length }
-                            ].map(seg => {
-                              const pct = pipeline.length > 0 ? (seg.count / pipeline.length) * 100 : 0;
-                              return (
-                                <div 
-                                  key={seg.label}
-                                  title={`${seg.label}: ${seg.count}`}
-                                  style={{ width: `${pct}%` }} 
-                                  className={`${seg.color} transition-all border-r border-white/20 last:border-0`} 
-                                />
                               );
                             })}
                           </div>
-                          <div className="flex gap-4">
-                            <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-orbe-green" /><span className="text-[8px] font-bold text-gray-500 uppercase">Done</span></div>
-                            <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-blue-400" /><span className="text-[8px] font-bold text-gray-500 uppercase">Pending</span></div>
-                            <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-amber-400" /><span className="text-[8px] font-bold text-gray-500 uppercase">Postponed</span></div>
-                          </div>
                         </div>
-                      </div>
-                    </div>
-
-                    {/* 2. NEXT 7 DAYS TIMELINE */}
-                    <div className="bg-white p-6 rounded-3xl border border-orbe-tan/30 shadow-sm relative overflow-hidden">
-                      {/* Decor sutil */}
-                      <div className="absolute top-0 right-0 w-32 h-32 bg-orbe-tan/5 rounded-bl-full -mr-16 -mt-16" />
-                      
-                      <div className="flex items-center justify-between mb-6 relative z-10">
-                        <div>
-                          <h4 className="text-sm font-black text-orbe-green uppercase tracking-tight">Timeline: Next 7 Days</h4>
-                          <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Scheduled activity distribution</p>
-                        </div>
-                        <div className="px-3 py-1 bg-orbe-green/5 rounded-full border border-orbe-tan/20 flex items-center gap-2">
-                           <div className="w-2 h-2 rounded-full bg-orbe-green animate-pulse" />
-                           <span className="text-[8px] font-black text-orbe-green uppercase">Live Calendar View</span>
-                        </div>
-                      </div>
-                      
-                      <div className="grid grid-cols-7 gap-3 relative z-10">
-                        {Array.from({ length: 7 }).map((_, i) => {
-                          const date = new Date();
-                          date.setDate(date.getDate() + i);
-                          const isToday = i === 0;
-                          const dayName = date.toLocaleDateString('en-US', { weekday: 'short' });
-                          const dayNum = date.getDate();
-                          
-                          const count = pipeline.filter(p => {
-                            const d = parseFlexibleDate(p.next_action_date);
-                            return d && d.getDate() === dayNum && d.getMonth() === date.getMonth() && d.getFullYear() === date.getFullYear() && String(p.action_status || '').trim().toLowerCase() !== 'done';
-                          }).length;
-
-                          const maxCount = 10; 
-                          const height = Math.min(100, (count / maxCount) * 100);
-
-                          return (
-                            <div key={`timeline-${i}`} className="flex flex-col items-center gap-3 group">
-                              <div className="flex-1 w-full bg-gray-50 rounded-xl relative overflow-hidden min-h-[140px] border border-gray-100 flex flex-col justify-end p-1 hover:border-orbe-tan/30 transition-all">
-                                <motion.div 
-                                  initial={{ height: 0 }}
-                                  animate={{ height: `${height}%` }}
-                                  className={`w-full rounded-lg transition-all ${isToday ? 'bg-orbe-green shadow-lg shadow-orbe-green/20' : 'bg-orbe-tan/40'}`}
-                                />
-                                {count > 0 && (
-                                  <div className="absolute inset-0 flex items-center justify-center">
-                                    <span className={`text-sm font-black ${isToday ? 'text-white' : 'text-orbe-green'} drop-shadow-sm`}>{count}</span>
-                                  </div>
-                                )}
-                              </div>
-                              <div className="text-center group-hover:scale-110 transition-transform">
-                                <p className={`text-[8px] font-black uppercase tracking-widest ${isToday ? 'text-orbe-green' : 'text-gray-400'}`}>{dayName}</p>
-                                <p className={`text-[10px] font-black ${isToday ? 'text-orbe-green font-black scale-110' : 'text-gray-600'}`}>{dayNum}</p>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
+                        </>
+                      );
+                    })()}
                   </div>
                 )}
 
@@ -2675,7 +2874,7 @@ export default function App() {
                               <div className="flex items-center justify-between relative z-10">
                                 <div className="flex items-center gap-4">
                                   <div className={`w-14 h-14 rounded-2xl flex items-center justify-center text-white font-black text-2xl shadow-lg ${owner === 'Juanjo' ? 'bg-[#5B8C5A] shadow-[#5B8C5A]/10' : 'bg-[#7C9A92] shadow-[#7C9A92]/10'}`}>
-                                    {owner[0]}
+                                    {(owner || '?')[0]}
                                   </div>
                                   <div>
                                     <h5 className="font-black text-orbe-green text-xl leading-none">{owner}</h5>
@@ -2705,9 +2904,9 @@ export default function App() {
                                 <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest px-1">Registered Interactions</p>
                                 <div className="grid grid-cols-3 gap-3">
                                   {[
-                                    { label: '7 DÍAS', days: 7, color: 'bg-[#F2F9F2] text-[#3D7A3C] border-[#E0F2E0] hover:bg-[#E8F5E8]' },
-                                    { label: '14 DÍAS', days: 14, color: 'bg-orange-50 text-orange-600 border-orange-100 hover:bg-orange-100/50' },
                                     { label: '30 DÍAS', days: 30, color: 'bg-orbe-green text-white border-orbe-green shadow-lg shadow-orbe-green/10 hover:brightness-110 flex-col' },
+                                    { label: '14 DÍAS', days: 14, color: 'bg-orange-50 text-orange-600 border-orange-100 hover:bg-orange-100/50' },
+                                    { label: '7 DÍAS', days: 7, color: 'bg-[#F2F9F2] text-[#3D7A3C] border-[#E0F2E0] hover:bg-[#E8F5E8]' },
                                   ].map(card => {
                                     const items = getActivityItems(card.days);
                                     return (
@@ -2783,9 +2982,9 @@ export default function App() {
                       {/* Temperature Tabs */}
                       <div className="flex border-b border-orbe-tan/10 bg-white sticky top-0 z-20">
                         {[
-                          { label: 'Active', range: '< 30 days', icon: <Zap size={14} />, color: 'text-green-500', active: 'border-green-500 bg-green-50/30 text-green-600' },
-                          { label: 'Warning', range: '30-60 days', icon: <Clock size={14} />, color: 'text-orange-500', active: 'border-orange-500 bg-orange-50/30 text-orange-600' },
                           { label: 'Cold', range: '> 60 days', icon: <AlertCircle size={14} />, color: 'text-red-500', active: 'border-red-500 bg-red-50/30 text-red-600' },
+                          { label: 'Warning', range: '30-60 days', icon: <Clock size={14} />, color: 'text-orange-500', active: 'border-orange-500 bg-orange-50/30 text-orange-600' },
+                          { label: 'Active', range: '< 30 days', icon: <Zap size={14} />, color: 'text-green-500', active: 'border-green-500 bg-green-50/30 text-green-600' },
                         ].map(tab => (
                           <button
                             key={tab.label}
@@ -2844,8 +3043,8 @@ export default function App() {
                                       <div className="text-[10px] text-gray-400 truncate max-w-[200px] mt-0.5 italic">"{item.last_activity}"</div>
                                     </td>
                                     <td className="p-4">
-                                      <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest ${item.owner === 'Juanjo' ? 'bg-[#5B8C5A]/10 text-[#5B8C5A]' : 'bg-[#7C9A92]/10 text-[#7C9A92]'}`}>
-                                        {item.owner}
+                                      <span className={`px-2.5 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest ${String(item.owner_id || '').trim().toLowerCase() === 'juanjo' ? 'bg-[#5B8C5A]/10 text-[#5B8C5A]' : 'bg-[#7C9A92]/10 text-[#7C9A92]'}`}>
+                                        {item.owner_id || item.owner || 'Unassigned'}
                                       </span>
                                     </td>
                                     <td className="p-4 font-mono text-gray-500 font-bold">
@@ -2860,9 +3059,10 @@ export default function App() {
                                     <td className="p-4 text-right">
                                       <button 
                                         onClick={() => {
-                                          setSearchTerm(item.company_name || '');
-                                          setView('pipeline');
-                                          // Se asume que al volver a pipeline con el search term, el usuario puede agendar
+                                          setAccomplishDate('');
+                                          setAccomplishAction('');
+                                          setModalError(null);
+                                          setTaskToAccomplish(item);
                                         }}
                                         className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-orbe-green/10 text-orbe-green rounded-lg text-[9px] font-black uppercase tracking-widest hover:bg-orbe-green hover:text-white transition-all shadow-sm active:scale-95"
                                       >
@@ -3027,7 +3227,7 @@ export default function App() {
                       />
                     </div>
 
-                    <div className="flex bg-gray-200/50 p-1 rounded-xl gap-1">
+                    <div className="flex bg-gray-200/50 p-1 rounded-xl gap-1 overflow-x-auto scrollbar-none max-w-[280px] md:max-w-none">
                       {[
                         { value: 'All', label: 'ALL' },
                         { value: 'Potential client', label: 'POTENTIAL' },
@@ -3076,6 +3276,7 @@ export default function App() {
                       <tr>
                         <th className="p-5 text-[10px] font-bold text-gray-400 uppercase tracking-widest">ID</th>
                         <th className="p-5 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Company</th>
+                        <th className="p-5 text-[10px] font-bold text-gray-400 uppercase tracking-widest text-center">Notes</th>
                         <th className="p-5 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Contact Name</th>
                         <th className="p-5 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Email</th>
                         <th className="p-5 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Mobile</th>
@@ -3092,22 +3293,48 @@ export default function App() {
                           </td>
                         </tr>
                       ) : (
-                        filteredClients.map(c => {
-                          const pipelineItem = pipeline.find(p => String(p.client_id) === String(c.id));
+                        filteredClients.map((c, idx) => {
+                          const pipelineItem = pipeline.find(p => String(p.client_id) === String(c.client_id || c.id));
                           return (
-                            <tr key={c.id} className="hover:bg-orbe-cream/30 transition-colors group">
-                              <td className="p-5 font-mono text-xs text-gray-400">#{c.id}</td>
+                            <tr key={`db-row-${c.client_id || c.id || idx}`} className="hover:bg-orbe-cream/30 transition-colors group">
+                              <td className="p-5 font-mono text-xs text-gray-400">#{c.client_id || c.id || idx}</td>
                               <td className="p-5 font-bold text-orbe-green">
                                 <div className="flex flex-col">
                                   <span>{c.company_name}</span>
                                   <span className={`text-[8px] uppercase tracking-tighter w-fit px-1 rounded border ${
-                                    c.client_status === 'Client' ? 'bg-green-50 text-green-700 border-green-100' : 
-                                    (c.client_status === 'Not interested' || c.client_status === 'Temporary Discarded' || c.client_status === 'Fail') ? 'bg-red-50 text-red-700 border-red-100' :
+                                    c.client_type === 'Client' ? 'bg-green-50 text-green-700 border-green-100' : 
+                                    (c.client_type === 'Not interested' || c.client_type === 'Temporary Discarded' || c.client_type === 'Fail') ? 'bg-red-50 text-red-700 border-red-100' :
                                     'bg-gray-50 text-orbe-green border-orbe-tan'
                                   }`}>
-                                    {c.client_status}
+                                    {c.client_type}
                                   </span>
                                 </div>
+                              </td>
+                              <td className="p-5 text-center">
+                                {c.notes ? (
+                                  <div className="relative group/note flex justify-center">
+                                    <button 
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        alert(c.notes);
+                                      }}
+                                      className="p-2 bg-blue-50 text-blue-600 rounded-lg transition-all hover:bg-blue-100 cursor-help"
+                                    >
+                                      <MessageSquare size={14} />
+                                    </button>
+                                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 p-3 bg-white border border-orbe-tan/30 rounded-xl shadow-xl z-[100] opacity-0 invisible group-hover/note:opacity-100 group-hover/note:visible transition-all pointer-events-none">
+                                      <div className="text-[10px] text-gray-600 font-medium whitespace-normal leading-relaxed text-left">
+                                        <p className="font-black text-orbe-green uppercase tracking-widest mb-1 border-b border-orbe-tan/10 pb-1">Client Notes</p>
+                                        <div className="max-h-40 overflow-y-auto pr-1">
+                                          {c.notes}
+                                        </div>
+                                      </div>
+                                      <div className="absolute top-full left-1/2 -translate-x-1/2 border-8 border-transparent border-t-white" />
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <span className="text-gray-300">-</span>
+                                )}
                               </td>
                               <td className="p-5 text-gray-600 font-medium">{c.contact_name}</td>
                               <td className="p-5">
@@ -3121,7 +3348,7 @@ export default function App() {
                                 {pipelineItem ? (
                                   <div className="flex flex-col items-center gap-1">
                                     <span className="text-[10px] font-black text-orbe-green bg-orbe-tan/20 px-3 py-1 rounded-full uppercase tracking-wider">
-                                      {pipelineItem.owner}
+                                      {pipelineItem.owner_id}
                                     </span>
                                     <span className="text-[8px] font-bold text-gray-400 italic">In Follow-up</span>
                                   </div>
@@ -3171,6 +3398,17 @@ export default function App() {
                                   >
                                     <Settings size={14} />
                                   </button>
+                                  <button 
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      const id = c.client_id || (c as any).id;
+                                      setShowDeleteModal(id);
+                                    }}
+                                    className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-all shadow-sm flex items-center justify-center cursor-pointer"
+                                    title="Borrar Cliente"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
                                 </div>
                               </td>
                             </tr>
@@ -3187,10 +3425,10 @@ export default function App() {
                         No clients matching your search.
                       </div>
                     ) : (
-                      filteredClients.map(c => {
-                        const pipelineItem = pipeline.find(p => String(p.client_id) === String(c.id));
+                      filteredClients.map((c, idx) => {
+                        const pipelineItem = pipeline.find(p => String(p.client_id) === String(c.client_id || c.id));
                         return (
-                          <div key={`db-mob-${c.id}`} className="bg-white rounded-2xl border border-orbe-tan/40 shadow-sm overflow-hidden flex flex-col active:bg-orbe-cream/10 transition-all">
+                          <div key={`db-mob-${c.client_id || c.id || idx}`} className="bg-white rounded-2xl border border-orbe-tan/40 shadow-sm overflow-hidden flex flex-col active:bg-orbe-cream/10 transition-all">
                             <div className="p-4">
                               <div className="flex justify-between items-start">
                                 <div className="flex-1 min-w-0 pr-2">
@@ -3200,13 +3438,24 @@ export default function App() {
                                   </div>
                                 </div>
                                 <div className={`shrink-0 px-3 py-1 rounded-full font-black text-[9px] uppercase tracking-tighter border ${
-                                  c.client_status === 'Client' ? 'bg-green-50 text-green-700 border-green-100' : 
-                                  c.client_status === 'Temporary Discarded' ? 'bg-red-50 text-red-700 border-red-100' :
+                                  c.client_type === 'Client' ? 'bg-green-50 text-green-700 border-green-100' : 
+                                  c.client_type === 'Temporary Discarded' ? 'bg-red-50 text-red-700 border-red-100' :
                                   'bg-gray-50 text-orbe-green border-orbe-tan'
                                 }`}>
-                                  {c.client_status}
+                                  {c.client_type}
                                 </div>
                               </div>
+
+                              {c.notes && (
+                                <div className="mt-3 p-3 bg-blue-50/30 rounded-xl border border-blue-100/50">
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <MessageSquare size={10} className="text-blue-500" />
+                                    <span className="text-[8px] font-black text-blue-600 uppercase tracking-widest">Notes</span>
+                                  </div>
+                                  <p className="text-[10px] text-gray-600 leading-tight line-clamp-2">{c.notes}</p>
+                                </div>
+                              )}
+
                               <div className="mt-3 grid grid-cols-2 gap-2">
                                 <a href={`mailto:${c.email}`} className="bg-gray-50 py-2 px-3 rounded-lg border border-orbe-tan/20 flex items-center justify-center gap-2 group active:bg-orbe-tan/10 transition-colors">
                                   <Mail size={14} className="text-orbe-tan group-active:text-orbe-green transition-colors" />
@@ -3222,9 +3471,9 @@ export default function App() {
                               {pipelineItem ? (
                                 <div className="flex items-center gap-2">
                                   <div className="w-6 h-6 rounded-full bg-orbe-green flex items-center justify-center text-white text-[9px] font-black">
-                                    {pipelineItem.owner[0]}
+                                    {(pipelineItem.owner_id || '?')[0]}
                                   </div>
-                                  <span className="text-[10px] font-black text-orbe-green uppercase tracking-tighter">{pipelineItem.owner}</span>
+                                  <span className="text-[10px] font-black text-orbe-green uppercase tracking-tighter">{pipelineItem.owner_id}</span>
                                 </div>
                               ) : (
                                 <span className="text-[9px] font-black text-red-400 uppercase tracking-widest">Unassigned</span>
@@ -3234,6 +3483,16 @@ export default function App() {
                                   <button onClick={() => { setAssigningClient(c); setAssigningOwner(''); setShowAssignConfirm(false); }} className="px-3 py-1.5 bg-orbe-green text-white rounded-lg text-[9px] font-black uppercase tracking-widest border border-orbe-green active:opacity-80 transition-all">Assign</button>
                                 )}
                                 <button onClick={() => setEditingClient(c)} className="p-2 bg-white border border-orbe-tan/30 text-orbe-green rounded-lg active:bg-orbe-tan/20 transition-all shadow-sm"><Settings size={14} /></button>
+                                <button 
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    const id = c.client_id || (c as any).id;
+                                    setShowDeleteModal(id);
+                                  }}
+                                  className="p-2 bg-red-50 text-red-600 border border-red-100 rounded-lg active:bg-red-100 transition-all shadow-sm"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
                               </div>
                             </div>
                           </div>
@@ -3275,48 +3534,38 @@ export default function App() {
                 </div>
                 
                 <form 
-                  onSubmit={async (e) => {
-                    e.preventDefault();
-                    console.log("Edit Form Submission Triggered");
-                    if (isSaving) {
-                      console.log("Already saving, ignoring click");
-                      return;
-                    }
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      console.log("Edit Form Submission Triggered");
+                      if (isSaving) return;
 
-                    try {
-                      const formData = new FormData(e.currentTarget);
-                      const updates: any = {
-                        company_name: (formData.get('company_name') as string || '').trim(),
-                        contact_name: (formData.get('contact_name') as string || '').trim(),
-                        lead_name: (formData.get('lead_name') as string || '').trim(),
-                        email: (formData.get('email') as string || '').trim(),
-                        phone: (formData.get('phone') as string || '').trim(),
-                        mobile: (formData.get('mobile') as string || '').trim(),
-                        address: (formData.get('address') as string || '').trim(),
-                        client_status: formData.get('client_status') as string,
-                      };
+                      setIsSaving(true);
+                      try {
+                        const formData = new FormData(e.currentTarget);
+                        const updates: any = {
+                          company_name: (formData.get('company_name') as string || '').trim(),
+                          contact_name: (formData.get('contact_name') as string || '').trim(),
+                          lead_name: (formData.get('lead_name') as string || '').trim(),
+                          email: (formData.get('email') as string || '').trim(),
+                          phone: (formData.get('phone') as string || '').trim(),
+                          mobile: (formData.get('mobile') as string || '').trim(),
+                          address: (formData.get('address') as string || '').trim(),
+                          client_type: formData.get('client_type') as string,
+                        };
 
-                      console.log("Form Updates Detected:", updates);
-
-                      if (!updates.company_name) {
-                        alert("Company name is required.");
-                        return;
+                        console.log("Attempting to update client with ID:", editingClient.client_id, "Payload:", updates);
+                        await handleUpdateClient(editingClient.client_id, updates);
+                        
+                        alert("Client updated successfully!");
+                        setEditingClient(null);
+                        await fetchClients();
+                      } catch (err: any) {
+                        console.error("Submission error:", err);
+                        alert(`Error: ${err.message || 'Unknown'}`);
+                      } finally {
+                        setIsSaving(false);
                       }
-
-                      if (!updates.email && !updates.phone) {
-                        alert("At least one contact method (Email or Phone) is required.");
-                        return;
-                      }
-
-                      console.log("Calling handleUpdateClient...");
-                      await handleUpdateClient(editingClient.client_id, updates);
-                      setEditingClient(null);
-                      console.log("Update successful, closed modal");
-                    } catch (err: any) {
-                      console.error("Submission error details:", err);
-                      alert(`Fatal Submission Error: ${err.message || 'Unknown'}`);
-                    }
-                  }}
+                    }}
                   className="p-8 space-y-6 max-h-[70vh] overflow-y-auto"
                 >
                   <div className="grid grid-cols-2 gap-4">
@@ -3348,13 +3597,17 @@ export default function App() {
                     </div>
                     <div className="col-span-2">
                       <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Office Address</label>
-                      <textarea name="address" rows={2} defaultValue={editingClient.address} className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-lg focus:ring-2 ring-orbe-green/10 outline-none transition-all mb-4" />
+                      <textarea name="address" rows={2} defaultValue={editingClient.address_line_1 || (editingClient as any).address} className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-lg focus:ring-2 ring-orbe-green/10 outline-none transition-all mb-1" />
                     </div>
                     <div className="col-span-2">
-                      <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Client Status</label>
+                      <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Client Notes</label>
+                      <textarea name="notes" rows={4} defaultValue={editingClient.notes} className="w-full p-3 bg-blue-50/20 border border-blue-100/50 rounded-lg focus:ring-2 ring-blue-500/10 outline-none transition-all mb-4" />
+                    </div>
+                    <div className="col-span-2">
+                      <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Client Type</label>
                       <select 
-                        name="client_status" 
-                        defaultValue={editingClient.client_status || 'Potential client'} 
+                        name="client_type" 
+                        defaultValue={editingClient.client_type || 'Potential client'} 
                         className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-lg focus:ring-2 ring-orbe-green/10 outline-none transition-all font-bold text-orbe-green uppercase"
                       >
                         <option value="Potential client">Potential client</option>
@@ -3363,7 +3616,7 @@ export default function App() {
                       </select>
                     </div>
                   </div>
-                  <div className="flex gap-4">
+                  <div className="flex flex-col md:flex-row gap-3">
                     <button type="button" onClick={() => setEditingClient(null)} className="flex-1 bg-gray-100 text-gray-500 py-4 rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-gray-200 transition-all">
                       CANCEL
                     </button>
@@ -3695,6 +3948,67 @@ export default function App() {
             </motion.div>
           )}
 
+        {/* MODAL ADVERTENCIA DUPLICADOS */}
+        <AnimatePresence>
+          {showDuplicateModal && duplicateMatch && (
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-orbe-green/60 backdrop-blur-md"
+            >
+              <motion.div 
+                initial={{ scale: 0.9, y: 20 }}
+                animate={{ scale: 1, y: 0 }}
+                exit={{ scale: 0.9, y: 20 }}
+                className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden border-4 border-amber-400"
+              >
+                <div className="bg-amber-400 p-8 text-center">
+                  <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-4 border-2 border-white/40">
+                    <AlertTriangle className="text-white w-8 h-8" />
+                  </div>
+                  <h2 className="text-2xl font-black text-amber-900 uppercase tracking-tighter leading-none mb-2">¡Atención!</h2>
+                  <p className="text-amber-900/70 text-[10px] font-bold uppercase tracking-widest">Posible registro duplicado</p>
+                </div>
+                
+                <div className="p-8">
+                  <p className="text-gray-600 text-sm leading-relaxed mb-6">
+                    Ya existe un cliente con un nombre muy similar: <br/>
+                    <span className="font-black text-orbe-green text-lg uppercase tracking-tight block mt-2">
+                      {duplicateMatch.company_name}
+                    </span>
+                  </p>
+                  
+                  <p className="text-xs text-gray-400 font-bold mb-8 italic">
+                    ¿Estás seguro de que se trata de un cliente distinto o es un duplicado?
+                  </p>
+                  
+                  <div className="space-y-3">
+                    <button 
+                      onClick={() => {
+                        executeSaveClient(pendingPayload);
+                      }}
+                      className="w-full py-4 bg-orbe-green text-white rounded-xl font-black text-[11px] uppercase tracking-[0.2em] hover:bg-orbe-green/90 transition-all shadow-lg active:scale-95"
+                    >
+                      Es un cliente distinto (Confirmar)
+                    </button>
+                    <button 
+                      onClick={() => {
+                        setShowDuplicateModal(false);
+                        setDuplicateMatch(null);
+                        setPendingPayload(null);
+                      }}
+                      className="w-full py-4 bg-gray-100 text-gray-400 rounded-xl font-black text-[11px] uppercase tracking-[0.2em] hover:bg-gray-200 transition-all active:scale-95 border border-gray-200"
+                    >
+                      Es un duplicado (Cancelar)
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
           {editingItem && (
             <motion.div 
               key="edit-modal-overlay"
@@ -3866,38 +4180,42 @@ export default function App() {
 
                     <div className="space-y-4">
                     {loadingHistory ? (
-                      <div key="loading-history" className="py-10 text-center text-gray-400 italic">Cargando bitácora...</div>
-                    ) : clientHistory.length === 0 ? (
-                      <div key="no-history" className="py-10 text-center text-gray-400 italic">No hay registros previos.</div>
+                      <div key="loading-history" className="py-10 text-center text-gray-400 italic font-medium">Cargando bitácora...</div>
+                    ) : (!clientHistory || clientHistory.length === 0) ? (
+                      <div key="no-history" className="py-12 text-center text-gray-400 font-bold bg-gray-50/50 rounded-2xl border-2 border-dashed border-gray-100 uppercase tracking-widest text-[10px]">
+                        No hay registros para este cliente.
+                      </div>
                     ) : (
-                      clientHistory.map((item) => (
-                        <div key={item.id} className="relative pl-6 border-l border-orbe-tan/20 last:border-l-0 pb-6 group">
+                      clientHistory.map((log, index) => (
+                        <div key={log.id ? `log-${log.id}` : `idx-${index}`} className="relative pl-6 border-l border-orbe-tan/20 last:border-l-0 pb-6 group">
                           <div className={`absolute -left-[5px] top-1 w-2.5 h-2.5 rounded-full border border-white shadow-sm transition-transform group-hover:scale-125 ${
-                            item.type === 'status_change' ? 'bg-orange-400' : 
-                            item.type === 'priority_change' ? 'bg-red-500' : 
-                            item.type === 'note' ? 'bg-orbe-green' : 'bg-gray-300'
+                            log.type === 'status_change' ? 'bg-orange-400' : 
+                            log.type === 'priority_change' ? 'bg-red-500' : 
+                            'bg-orbe-green'
                           }`}></div>
                           
                           <div className="flex flex-col gap-1">
                             <div className="flex justify-between items-center">
                               <span className="text-[10px] font-black text-orbe-green uppercase tracking-widest opacity-40">
-                                {formatDateTimeSafe(item.next_action_date || item.created_at)}
+                                {formatDateTimeSafe(log.next_action_date || log.created_at)}
                               </span>
                               <div className="flex items-center gap-1.5 grayscale opacity-50">
                                 <UserCircle size={10} />
                                 <span className="text-[9px] font-bold uppercase truncate max-w-[80px]">
-                                  {item.created_by?.split('@')[0] || 'User'}
+                                  {(log.created_by?.split('@') || [])[0] || 'User'}
                                 </span>
                               </div>
                             </div>
 
                             <div className="bg-white rounded-xl p-3 border border-orbe-tan/10 shadow-sm group-hover:border-orbe-tan/30 transition-all">
+                              {/* Mapeo de Campos: last_activity */}
                               <p className="text-[11px] font-black text-orbe-green uppercase tracking-tight leading-tight">
-                                {item.last_activity}
+                                {log.last_activity || 'Sin actividad registrada'}
                               </p>
                               
+                              {/* Mapeo de Campos: notes */}
                               <div className="mt-2 text-[11px] text-gray-600 leading-relaxed font-medium bg-gray-50/50 p-2 rounded-lg border border-gray-100/50">
-                                {item.notes && item.notes.trim() !== '' ? item.notes : 'Sin notas'}
+                                {log.notes && log.notes.trim() !== '' ? log.notes : 'Sin observaciones'}
                               </div>
                             </div>
                           </div>
@@ -3927,6 +4245,48 @@ export default function App() {
           <span className="text-orbe-green opacity-50 underline decoration-orbe-tan">OrBe Gastronómico LTD</span>
         </div>
       </footer>
+
+      {/* CUSTOM DELETE CONFIRMATION MODAL */}
+      <AnimatePresence>
+        {showDeleteModal && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[999] flex items-center justify-center p-4">
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white rounded-2xl shadow-2xl overflow-hidden w-full max-w-sm border-2 border-red-100"
+            >
+              <div className="bg-red-50 p-6 flex flex-col items-center text-center">
+                <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center text-red-600 mb-4">
+                  <Trash2 size={32} />
+                </div>
+                <h3 className="text-xl font-black text-orbe-green uppercase tracking-tighter">Are you sure?</h3>
+                <p className="text-gray-500 text-sm mt-2">
+                  This action is permanent and will delete all information for client <span className="font-bold text-red-600">#{showDeleteModal}</span> and their history.
+                </p>
+              </div>
+              <div className="p-4 flex gap-3 bg-gray-50 border-t border-orbe-tan/20">
+                <button
+                  onClick={() => setShowDeleteModal(null)}
+                  className="flex-1 py-3 px-4 bg-white border border-orbe-tan/30 rounded-xl text-[10px] font-black text-gray-500 uppercase tracking-widest hover:bg-gray-100 transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    const id = showDeleteModal;
+                    setShowDeleteModal(null);
+                    await handleDeleteClient(id);
+                  }}
+                  className="flex-1 py-3 px-4 bg-red-600 rounded-xl text-[10px] font-black text-white uppercase tracking-widest hover:bg-red-700 shadow-lg shadow-red-200 transition-all"
+                >
+                  Yes, Delete
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
