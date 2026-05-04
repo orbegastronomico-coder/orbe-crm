@@ -12,7 +12,7 @@ import {
   Filter, MoreHorizontal, LogOut, Briefcase, Clock, CheckSquare,
   Settings, Save, XCircle, History, ArrowLeft, Loader2, Star,
   Mic, MicOff, Leaf, Eye, EyeOff, ShieldCheck, Target, Zap, ArrowUpDown,
-  Edit2, AlertTriangle, Trash2, MessageSquare
+  Edit2, AlertTriangle, Trash2, MessageSquare, BarChart, BarChart3, PieChart, TrendingUp, Layers, Building2, Globe, ZapOff, CalendarOff, ShieldAlert
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -81,8 +81,9 @@ interface Client {
 interface PipelineItem {
   id: string | number;
   client_id: string | number;
-  company_name?: string; // Joined field
-  client_status?: string; // Joined field from clients table
+  company_name?: string; 
+  client_status?: string; 
+  client_type?: string; // Added to store relationship for filtering
   owner_id: User;
   status: PipelineStatus;
   last_contact_date: string;
@@ -95,6 +96,42 @@ interface PipelineItem {
   created_at?: string;
 }
 
+const PIPELINE_STAGE_CARDS = [
+  '1st contact',
+  'Pending',
+  'Baking off',
+  'Grajales',
+  'Client',
+  'Not interested',
+  'No status',
+  'Other'
+] as const;
+
+const getRawPipelineStage = (p: Partial<PipelineItem>) => {
+  const raw = String(p.client_status || p.status || '').trim();
+  return raw || 'No status';
+};
+
+const normalizePipelineStage = (stage: string) => {
+  const s = String(stage || '').trim().toLowerCase();
+
+  if (!s || s === 'no status') return 'No status';
+
+  if (['1st contact', 'first contact', 'first_contact', 'new lead', 'new', 'contactado'].includes(s)) return '1st contact';
+
+  if (['pending', 'follow up', 'follow-up', 'awaiting response', 'seguimiento iniciado', 'seguimiento'].includes(s)) return 'Pending';
+
+  if (['baking off', 'baking-off', 'bakingoff'].includes(s)) return 'Baking off';
+
+  if (['grajales'].includes(s)) return 'Grajales';
+
+  if (['client', 'customer', 'won'].includes(s)) return 'Client';
+
+  if (['not interested', 'lost', 'disqualified', 'temporary discarded', 'discarded', 'temp discarded'].includes(s)) return 'Not interested';
+
+  return 'Other';
+};
+
 interface HistoryEntry {
   id: string | number;
   client_id: string | number;
@@ -105,6 +142,23 @@ interface HistoryEntry {
   created_at: string;
   created_by: string;
 }
+
+const safeKey = (prefix: string, value: any, index?: number) => {
+  const clean = String(value ?? '').trim();
+  return `${prefix}-${clean || 'unknown'}${index !== undefined ? `-${index}` : ''}`;
+};
+
+const getPipelineKey = (item: PipelineItem, prefix = 'pipeline', index?: number) => {
+  const id = String(item?.id ?? '').trim();
+  if (id) return `${prefix}-${id}`;
+  return `${prefix}-${item?.client_id || 'no-client'}-${item?.next_action_date || 'no-date'}-${item?.last_activity || 'no-activity'}-${index ?? 'no-index'}`;
+};
+
+const getClientKey = (client: Client, prefix = 'client', index?: number) => {
+  const id = String((client as any)?.id ?? client?.client_id ?? '').trim();
+  if (id) return `${prefix}-${id}`;
+  return `${prefix}-${client?.company_name || 'no-company'}-${index ?? 'no-index'}`;
+};
 
 const MOCK_CLIENTS: Client[] = [
   { client_id: 1, company_name: 'Tech Solutions SL', contact_name: 'Ana García', lead_name: 'Lead Orbe A', email: 'ana@tech.com', phone: '600111222', mobile: '699000111', address_line_1: 'Calle Falsa 123', client_type: 'Potential client' },
@@ -120,8 +174,10 @@ export default function App() {
   const [loginLoading, setLoginLoading] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
 
-  const [view, setView] = useState<'pipeline' | 'new' | 'database' | 'control'>('pipeline');
+  const [view, setView] = useState<'pipeline' | 'new' | 'database' | 'control' | 'weekly'>('pipeline');
   const [dashboardTab, setDashboardTab] = useState<'priorities' | 'overview' | 'activity'>('overview');
+  const [selectedPostponedList, setSelectedPostponedList] = useState<{ owner: string; items: PipelineItem[] } | null>(null);
+  const [selectedDetail, setSelectedDetail] = useState<{ type: string; label: string; items: any[] } | null>(null);
   const [currentUser, setCurrentUser] = useState<User>(() => {
     const saved = localStorage.getItem('orbe_user');
     return (saved && USERS.includes(saved as User)) ? (saved as User) : USERS[0];
@@ -298,6 +354,12 @@ export default function App() {
   const [wizardConfig, setWizardConfig] = useState({ url: config.url, key: config.key });
   const [selectedClientForHistory, setSelectedClientForHistory] = useState<Client | null>(null);
   const [clientHistory, setClientHistory] = useState<HistoryEntry[]>([]);
+  const [overviewDateRange, setOverviewDateRange] = useState<string>('All time');
+  const [overviewOwnerFilter, setOverviewOwnerFilter] = useState<User>('All');
+  const [overviewClientTypeFilter, setOverviewClientTypeFilter] = useState<string>('All client types');
+  
+  // Weekly Priorities window state
+  const [weeklyDateRange, setWeeklyDateRange] = useState<string>('Next 7 days');
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [newNote, setNewNote] = useState('');
@@ -317,7 +379,7 @@ export default function App() {
   const [pipelineColumns, setPipelineColumns] = useState<string[]>([]);
   const [selectedActivityList, setSelectedActivityList] = useState<{ owner: string, days: number, items: PipelineItem[] } | null>(null);
   const [timelineSellerFilter, setTimelineSellerFilter] = useState<User>('All');
-  const [overviewOwnerFilter, setOverviewOwnerFilter] = useState<User>('All');
+  const [commandSellerFilter, setCommandSellerFilter] = useState<User>('All');
   const [timelineTemperature, setTimelineTemperature] = useState<'Active' | 'Warning' | 'Cold'>('Cold');
   const [showDeleteModal, setShowDeleteModal] = useState<string | number | null>(null);
 
@@ -382,6 +444,64 @@ export default function App() {
     const d = new Date(normalized);
     return isNaN(d.getTime()) ? null : d;
   };
+
+  // --- ROLLING DATE HELPERS ---
+  const getToday = () => {
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    return now;
+  };
+
+  const normalizeStatus = (val: string | null | undefined) => String(val || '').trim().toLowerCase();
+  const isDone = (status: string | null | undefined) => normalizeStatus(status) === 'done';
+
+  const isOverdue = (dateStr: string | null | undefined, actionStatus?: string | null | undefined) => {
+    if (isDone(actionStatus)) return false;
+    const d = parseFlexibleDate(dateStr);
+    if (!d) return false;
+    return d < getToday();
+  };
+
+  const isDueToday = (dateStr: string | null | undefined, actionStatus?: string | null | undefined) => {
+    if (isDone(actionStatus)) return false;
+    const d = parseFlexibleDate(dateStr);
+    if (!d) return false;
+    const today = getToday();
+    return d.getDate() === today.getDate() && 
+           d.getMonth() === today.getMonth() && 
+           d.getFullYear() === today.getFullYear();
+  };
+
+  const isWithinNextDays = (dateStr: string | null | undefined, days: number, actionStatus?: string | null | undefined) => {
+    if (isDone(actionStatus)) return false;
+    const d = parseFlexibleDate(dateStr);
+    if (!d) return false;
+    const today = getToday();
+    const limit = new Date(today);
+    limit.setDate(limit.getDate() + days);
+    return d >= today && d <= limit;
+  };
+
+  const isWithinLastDays = (dateStr: string | null | undefined, days: number) => {
+    const d = parseFlexibleDate(dateStr);
+    if (!d) return false;
+    const today = getToday();
+    const limit = new Date(today);
+    limit.setDate(limit.getDate() - days);
+    // Para historial suele ser (limit <= d <= today+1day_end)
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    return d >= limit && d < tomorrow;
+  };
+
+  const isMissingNextActionDate = (p: PipelineItem) => {
+    if (isDone(p.action_status)) return false;
+    const status = normalizeStatus(p.client_status);
+    const isExcluded = ['not interested', 'lost', 'disqualified', 'temp discarded', 'no longer exists'].includes(status);
+    if (isExcluded) return false;
+    return !p.next_action_date;
+  };
+  // --- END ROLLING HELPERS ---
 
   const fetchClients = async () => {
     setLoading(true);
@@ -483,9 +603,10 @@ export default function App() {
           id: p.id || p.ID || p.n || p.N,
           client_id: cId,
           company_name: relatedClient?.company_name || 'Cliente Desconocido',
-          client_status: relatedClient?.client_type || 'Potential client',
-          owner_id: (dbOwner || currentUser) as User,
+          client_status: dbStatus, // Corrected: Use dbStatus for pipeline stage
           status: dbStatus,
+          client_type: relatedClient?.client_type || 'Potential client', // Preservation of account type
+          owner_id: (dbOwner || currentUser) as User,
           last_contact_date: lastContact,
           samples_sent: p.samples_sent || p.samples || p.Samples || p.muestras || '-',
           last_activity: p.last_activity || p.last_action || p.LastAction || p.accion || 'Seguimiento iniciado',
@@ -566,14 +687,6 @@ export default function App() {
     const d = parseFlexibleDate(dateStr);
     if (!d) return '';
     return d.toISOString().split('T')[0];
-  };
-
-  const isOverdue = (dateStr: string) => {
-    const d = parseFlexibleDate(dateStr);
-    if (!d) return false;
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    return d < today;
   };
 
   const getStatusBadge = (date: string) => {
@@ -1052,7 +1165,24 @@ export default function App() {
       // 2. Actualizar el status del cliente en la tabla 'clients'
       if (newStatus) {
         const clientIdCol = clients.length > 0 && Object.keys(clients[0]).includes('client_id') ? 'client_id' : 'id';
-        await supabase.from('clients').update({ client_type: newStatus, client_status: newStatus }).eq(clientIdCol, prevItem.client_id);
+        
+        // Determinar el client_type (tipo de cuenta) basado en el nuevo stage
+        let finalClientType = 'Potential client';
+        const s = String(newStatus).toLowerCase();
+        if (s === 'client' || s === 'customer') {
+          finalClientType = 'Client';
+        } else if (s.includes('discard') || s.includes('interest') || s === 'fail') {
+          finalClientType = 'Not interested';
+        } else {
+          // Si es un stage intermedio (Grajales, Baking off, etc.), mantenemos el tipo original si es posible
+          const currentClient = clients.find(c => String(c.client_id) === String(prevItem.client_id));
+          finalClientType = currentClient?.client_type || 'Potential client';
+        }
+
+        await supabase.from('clients').update({ 
+          client_type: finalClientType, 
+          client_status: newStatus 
+        }).eq(clientIdCol, prevItem.client_id);
       }
 
       // 3. Insertar el nuevo registro como 'Pending'
@@ -1403,11 +1533,22 @@ export default function App() {
     let finalItems = Array.from(clientMap.values());
     if (statusFilter !== 'All') {
       finalItems = finalItems.filter(item => {
-        const cStatus = String(item.client_status || 'Potential client').toLowerCase().trim();
+        // Use client_type for account type filtering (Potential vs Client vs Discarded)
+        // client_status now contains the commercial stage (pipeline stage)
+        const cType = String(item.client_type || 'Potential client').toLowerCase().trim();
         const fStatus = String(statusFilter).toLowerCase().trim();
         
-        // Match specific mappings if needed (e.g. handled by the select values now)
-        return cStatus === fStatus;
+        if (fStatus === 'not interested') {
+          return cType.includes('discard') || cType.includes('interest') || cType.includes('fail') || cType.includes('disqual');
+        }
+        if (fStatus === 'potential client') {
+          return cType.includes('potential') || cType.includes('prospect') || cType === 'new';
+        }
+        if (fStatus === 'client') {
+          return cType === 'client' || cType === 'customer' || cType === 'won';
+        }
+        
+        return cType === fStatus;
       });
     }
 
@@ -1469,6 +1610,76 @@ export default function App() {
       (a.company_name || '').localeCompare(b.company_name || '')
     );
   }, [clients, searchTerm, assignmentFilter, statusFilter, pipeline]);
+
+  const overviewData = useMemo(() => {
+    const isDateInRange = (dateStr: string | null | undefined) => {
+      if (overviewDateRange === 'All time') return true;
+      if (overviewDateRange === 'Last 7 days') return isWithinLastDays(dateStr, 7);
+      if (overviewDateRange === 'Last 14 days') return isWithinLastDays(dateStr, 14);
+      if (overviewDateRange === 'Last 30 days') return isWithinLastDays(dateStr, 30);
+      
+      const d = parseFlexibleDate(dateStr);
+      if (!d) return false;
+      const today = getToday();
+      
+      if (overviewDateRange === 'This month') {
+        return d.getMonth() === today.getMonth() && d.getFullYear() === today.getFullYear();
+      }
+      if (overviewDateRange === 'Last month') {
+        const lastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+        const nextMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+        return d >= lastMonth && d < nextMonth;
+      }
+      return true;
+    };
+
+    // Build the unified dataset
+    const overviewPipelineRows = pipeline.map(p => {
+      const stage = getRawPipelineStage(p);
+      const effectiveStage = normalizePipelineStage(stage);
+      
+      return {
+        ...p,
+        effectiveStage,
+        isOverdue: isOverdue(p.next_action_date, p.action_status),
+        hasNoNextAction: isMissingNextActionDate(p)
+      };
+    }).filter(p => {
+      const matchesSeller = overviewOwnerFilter === 'All' || p.owner_id === overviewOwnerFilter;
+      const matchesDate = isDateInRange(p.last_contact_date || p.created_at);
+      
+      let matchesType = true;
+      const type = (p.client_type || '').toLowerCase();
+      if (overviewClientTypeFilter === 'Client') {
+        matchesType = type === 'client' || type === 'customer';
+      } else if (overviewClientTypeFilter === 'Potential client') {
+        matchesType = type.includes('potential') || type.includes('prospect');
+      } else if (overviewClientTypeFilter === 'Discarded') {
+        matchesType = type.includes('discard') || type.includes('disqual') || type.includes('temp');
+      }
+
+      return matchesSeller && matchesDate && matchesType;
+    });
+
+    const filteredC = clients.filter(c => {
+      let matchesType = true;
+      const type = (c.client_type || '').toLowerCase();
+      if (overviewClientTypeFilter === 'Client') {
+        matchesType = type === 'client' || type === 'customer';
+      } else if (overviewClientTypeFilter === 'Potential client') {
+        matchesType = type.includes('potential') || type.includes('prospect');
+      } else if (overviewClientTypeFilter === 'Discarded') {
+        matchesType = type.includes('discard') || type.includes('disqual') || type.includes('temp');
+      }
+      return matchesType;
+    });
+
+    return {
+      overviewPipelineRows,
+      filteredC,
+      totalPipeline: overviewPipelineRows.length
+    };
+  }, [pipeline, clients, overviewOwnerFilter, overviewDateRange, overviewClientTypeFilter]);
 
   if (!session) {
     return (
@@ -1612,8 +1823,9 @@ export default function App() {
 
           <nav className="space-y-1">
             {[
-              { id: 'pipeline', icon: <LayoutDashboard size={18}/>, label: 'Sales Pipeline' },
-              { id: 'database', icon: <Database size={18}/>, label: 'Clients Database' },
+              { id: 'pipeline', icon: <LayoutDashboard size={18}/>, label: 'Pipeline' },
+              { id: 'database', icon: <Database size={18}/>, label: 'Database' },
+              { id: 'weekly', icon: <ShieldCheck size={18}/>, label: 'Weekly Priorities' },
               { id: 'control', icon: <AlertCircle size={18}/>, label: 'Dashboard' },
             ].map(item => (
               <button 
@@ -1625,7 +1837,7 @@ export default function App() {
                   {item.icon}
                 </div>
                 <span className="font-medium text-sm">{item.label}</span>
-                {item.id === 'control' && pipeline.some(p => (p.owner_id === currentUser || (currentUser === 'All' && ['juanjo', 'alejandro'].includes(String(p.owner_id || '').toLowerCase().trim()))) && new Date(p.next_action_date) < new Date()) && (
+                {item.id === 'control' && pipeline.some(p => isOverdue(p.next_action_date, p.action_status)) && (
                   <div className="absolute right-3 w-2 h-2 bg-orbe-overdue rounded-full animate-ping"></div>
                 )}
               </button>
@@ -1661,11 +1873,21 @@ export default function App() {
           <span className="text-[8px] font-black uppercase tracking-tighter">Database</span>
         </button>
         <button 
+          onClick={() => setView('weekly')} 
+          className={`flex flex-col items-center gap-1 transition-all ${view === 'weekly' ? 'text-white scale-110' : 'text-white/40'}`}
+        >
+          <ShieldCheck size={22} />
+          <span className="text-[8px] font-black uppercase tracking-tighter">Weekly Priorities</span>
+        </button>
+        <button 
           onClick={() => setView('control')} 
-          className={`flex flex-col items-center gap-1 transition-all ${view === 'control' ? 'text-white scale-110' : 'text-white/40'}`}
+          className={`flex flex-col items-center gap-1 transition-all ${view === 'control' ? 'text-white scale-110' : 'text-white/40'} relative`}
         >
           <LayoutDashboard size={22} />
           <span className="text-[8px] font-black uppercase tracking-tighter">Dashboard</span>
+          {pipeline.some(p => isOverdue(p.next_action_date, p.action_status)) && (
+            <div className="absolute -top-1 -right-1 w-2 h-2 bg-orbe-overdue rounded-full animate-pulse border border-white" />
+          )}
         </button>
       </nav>
 
@@ -1673,13 +1895,13 @@ export default function App() {
       <AnimatePresence>
         {assigningClient && (
           <div key="assign-modal-overlay" className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
-            <motion.div 
-              key="assign-modal-content"
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white rounded-3xl shadow-2xl max-w-md w-full overflow-hidden"
-            >
+              <motion.div 
+                key="assign-modal-content"
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                className="bg-white rounded-t-3xl md:rounded-3xl max-w-md w-full overflow-hidden shadow-2xl h-[70vh] md:h-auto flex flex-col mt-auto md:mt-0"
+              >
               <div className="p-8">
                 {!showAssignConfirm ? (
                   <>
@@ -2192,8 +2414,8 @@ export default function App() {
                           </td>
                         </tr>
                       ) : (
-                        userPipeline.map(item => (
-                          <tr key={item.id} className="hover:bg-orbe-cream/30 transition-colors">
+                        userPipeline.map((item, index) => (
+                          <tr key={getPipelineKey(item, 'pipeline-row', index)} className="hover:bg-orbe-cream/30 transition-colors">
                             <td className="px-3 py-2">
                               <div className="font-bold text-orbe-green">{item.company_name}</div>
                             </td>
@@ -2330,12 +2552,12 @@ export default function App() {
                   {/* VISTA MÓVIL: CARDS (Pipeline) */}
                   <div className="md:hidden space-y-4 mobile-cards-container">
                     {userPipeline.length === 0 ? (
-                      <div className="py-20 text-center text-gray-400 font-medium italic bg-white rounded-xl border border-dashed border-orbe-tan">
+                      <div key="empty-pipeline-mobile" className="py-20 text-center text-gray-400 font-medium italic bg-white rounded-xl border border-dashed border-orbe-tan">
                         No active follow-ups found.
                       </div>
                     ) : (
-                      userPipeline.map(item => (
-                        <div key={`mob-pipe-${item.id}`} className="bg-orbe-cream/30 rounded-2xl border border-orbe-tan/40 overflow-hidden shadow-sm flex flex-col">
+                      userPipeline.map((item, idx) => (
+                        <div key={getPipelineKey(item, 'mobile-pipeline-card', idx)} className="bg-orbe-cream/30 rounded-2xl border border-orbe-tan/40 overflow-hidden shadow-sm flex flex-col">
                           <div className="p-4 flex flex-col gap-3">
                             <div className="flex justify-between items-start">
                               <div>
@@ -2374,10 +2596,26 @@ export default function App() {
                                   <p className="text-xs font-semibold text-gray-600 italic mt-1 leading-snug">"{item.last_activity || 'No recent notes'}"</p>
                                 </div>
                               </div>
+                              <div className="h-px bg-orbe-tan/20 my-1" />
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2 text-orbe-green/70">
+                                  <Layers size={14} />
+                                  <span className="text-xs font-black uppercase tracking-tight">Stage</span>
+                                </div>
+                                <span 
+                                  className={`px-2 py-1 rounded-full font-bold text-[9px] border shadow-sm transition-all inline-block uppercase tracking-wider ${
+                                    item.status === 'Client' ? 'bg-green-50 text-green-700 border-green-100' : 
+                                    (item.status === 'Not interested' || item.status === 'Temporary Discarded' || item.status === 'Fail') ? 'bg-red-50 text-red-700 border-red-100' :
+                                    'bg-gray-100 text-orbe-green border-gray-200'
+                                  }`}
+                                >
+                                  {item.status === 'Not interested' ? 'Discarded' : (item.status || '1st contact')}
+                                </span>
+                              </div>
                             </div>
                           </div>
 
-                          <div className="flex border-t border-orbe-tan/30 h-14">
+                          <div className="flex border-t border-orbe-tan/30 h-16">
                             <button 
                               onClick={() => {
                                 setAccomplishDate('');
@@ -2385,7 +2623,7 @@ export default function App() {
                                 setModalError(null);
                                 setTaskToAccomplish(item);
                               }}
-                              className="flex-1 bg-orbe-green text-white font-black text-[10px] uppercase tracking-[0.2em] flex items-center justify-center gap-3 active:opacity-80 transition-all border-r border-white/10"
+                              className="flex-1 bg-orbe-green text-white font-black text-[9px] uppercase tracking-tighter flex flex-col items-center justify-center gap-1 active:opacity-80 transition-all border-r border-white/10"
                             >
                               <CheckCircle size={18} /> Close
                             </button>
@@ -2394,7 +2632,7 @@ export default function App() {
                                 setModalError(null);
                                 setPostponeItem(item);
                               }}
-                              className="flex-1 bg-orbe-tan/20 text-orbe-green font-black text-[10px] uppercase tracking-[0.2em] flex items-center justify-center gap-3 active:bg-orbe-tan/40 transition-all border-r border-orbe-tan/10"
+                              className="flex-1 bg-orbe-tan/20 text-orbe-green font-black text-[9px] uppercase tracking-tighter flex flex-col items-center justify-center gap-1 active:bg-orbe-tan/40 transition-all border-r border-orbe-tan/10"
                             >
                               <Calendar size={18} /> Postpone
                             </button>
@@ -2403,9 +2641,25 @@ export default function App() {
                                 setModalError(null);
                                 setEditingItem(item);
                               }}
-                              className="flex-1 bg-blue-50 text-blue-600 font-black text-[10px] uppercase tracking-[0.2em] flex items-center justify-center gap-3 active:bg-blue-100 transition-all"
+                              className="flex-1 bg-blue-50 text-blue-600 font-black text-[9px] uppercase tracking-tighter flex flex-col items-center justify-center gap-1 active:bg-blue-100 transition-all border-r border-blue-100"
                             >
                               <Edit2 size={18} /> Edit
+                            </button>
+                            <button 
+                              onClick={() => {
+                                const targetClient = clients.find(c => String(c.client_id) === String(item.client_id));
+                                if (targetClient) {
+                                  setSelectedClientForHistory(targetClient);
+                                } else {
+                                  setSelectedClientForHistory({
+                                    client_id: item.client_id,
+                                    company_name: item.company_name || 'Unknown',
+                                  } as any);
+                                }
+                              }}
+                              className="flex-1 bg-gray-50 text-orbe-green font-black text-[9px] uppercase tracking-tighter flex flex-col items-center justify-center gap-1 active:bg-gray-100 transition-all"
+                            >
+                              <Clock size={18} /> Log
                             </button>
                           </div>
                         </div>
@@ -2428,13 +2682,6 @@ export default function App() {
                 {/* SUB-NAVIGATION TABS */}
                 <div className="flex items-center gap-1 bg-orbe-tan/10 p-1 rounded-xl w-fit shrink-0 overflow-x-auto no-scrollbar">
                   <button 
-                    onClick={() => setDashboardTab('priorities')}
-                    className={`px-6 py-2.5 rounded-lg text-[10px] font-black uppercase tracking-[0.1em] transition-all flex items-center gap-2 whitespace-nowrap ${dashboardTab === 'priorities' ? 'bg-orbe-green text-white shadow-md' : 'text-orbe-green hover:bg-black/5'}`}
-                  >
-                    <Target size={14} />
-                    Priorities
-                  </button>
-                  <button 
                     onClick={() => setDashboardTab('overview')}
                     className={`px-6 py-2.5 rounded-lg text-[10px] font-black uppercase tracking-[0.1em] transition-all flex items-center gap-2 whitespace-nowrap ${dashboardTab === 'overview' ? 'bg-orbe-green text-white shadow-md' : 'text-orbe-green hover:bg-black/5'}`}
                   >
@@ -2450,338 +2697,173 @@ export default function App() {
                   </button>
                 </div>
 
-                {dashboardTab === 'priorities' && (
-                  <div className="space-y-6 animate-in fade-in duration-300">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      {['Juanjo', 'Alejandro'].map((owner) => {
-                        const ownerTasks = pipeline.filter(p => 
-                          String(p.owner_id || '').toLowerCase().trim() === owner.toLowerCase() && 
-                          String(p.action_status || '').trim().toLowerCase() !== 'done'
-                        ).sort((a, b) => {
-                          const wA = PRIORITIES[a.priority as Priority] || 999;
-                          const wB = PRIORITIES[b.priority as Priority] || 999;
-                          return wA - wB;
-                        });
+                {dashboardTab === 'overview' && (
+                  <motion.div 
+                    key="overview-view"
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    className="space-y-8 pb-20"
+                  >
+                    {/* HEADER & FILTERS */}
+                    <div className="bg-white rounded-3xl border border-orbe-tan/30 shadow-sm p-6 md:p-8 space-y-8">
+                      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+                        <div>
+                          <h2 className="text-2xl font-black text-orbe-green tracking-tighter uppercase leading-none">Commercial Performance Overview</h2>
+                          <div className="flex items-center gap-2 mt-2">
+                            <div className="w-2 h-2 rounded-full bg-orbe-green animate-pulse" />
+                            <span className="text-[9px] font-black text-orbe-green uppercase tracking-widest">Real-time Metrics</span>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full md:w-auto">
+                          <div className="space-y-2">
+                            <label className="text-[9px] font-black text-gray-400 uppercase tracking-[0.2em] ml-1">Date Range</label>
+                            <div className="flex flex-wrap gap-1 p-1 bg-gray-50 rounded-xl border border-orbe-tan/10">
+                              {['Last 7 days', 'Last 14 days', 'Last 30 days', 'This month', 'Last month', 'All time'].map(range => (
+                                <button
+                                  key={range}
+                                  onClick={() => setOverviewDateRange(range)}
+                                  className={`px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-tight transition-all ${overviewDateRange === range ? 'bg-orbe-green text-white shadow-sm' : 'text-orbe-green/40 hover:text-orbe-green/60'}`}
+                                >
+                                  {range}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="space-y-2">
+                            <label className="text-[9px] font-black text-gray-400 uppercase tracking-[0.2em] ml-1">Seller</label>
+                            <div className="flex gap-1 p-1 bg-gray-50 rounded-xl border border-orbe-tan/10">
+                              {USERS.map(user => (
+                                <button
+                                  key={user}
+                                  onClick={() => setOverviewOwnerFilter(user)}
+                                  className={`flex-1 px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-tight transition-all ${overviewOwnerFilter === user ? 'bg-orbe-green text-white shadow-sm' : 'text-orbe-green/40 hover:text-orbe-green/60'}`}
+                                >
+                                  {user}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="space-y-2">
+                            <label className="text-[9px] font-black text-gray-400 uppercase tracking-[0.2em] ml-1">Account Type</label>
+                            <div className="flex gap-1 p-1 bg-gray-50 rounded-xl border border-orbe-tan/10">
+                              {['All client types', 'Client', 'Potential client', 'Discarded'].map(type => (
+                                <button
+                                  key={type}
+                                  onClick={() => setOverviewClientTypeFilter(type)}
+                                  className={`flex-1 px-2.5 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-tight transition-all ${overviewClientTypeFilter === type ? 'bg-orbe-green text-white shadow-sm' : 'text-orbe-green/40 hover:text-orbe-green/60'}`}
+                                >
+                                  {type.split(' ')[0]}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* KPI SNAPSHOT */}
+                      {(() => {
+                        const { filteredC, overviewPipelineRows } = overviewData;
+                        const isClient = (type: string) => ['client', 'customer'].includes((type || '').toLowerCase());
+                        const isDiscarded = (type: string) => (type || '').toLowerCase().includes('discard') || (type || '').toLowerCase().includes('disqual') || (type || '').toLowerCase().includes('temp');
+
+                        const kpis = [
+                          { label: 'Total Accounts', value: filteredC.length, color: 'text-orbe-green', bg: 'bg-orbe-green/5', icon: <Users size={18} />, items: filteredC },
+                          { label: 'Potential Clients', value: filteredC.filter(c => !isClient(c.client_type || '') && !isDiscarded(c.client_type || '')).length, color: 'text-blue-600', bg: 'bg-blue-50', icon: <Target size={18} />, items: filteredC.filter(c => !isClient(c.client_type || '') && !isDiscarded(c.client_type || '')) },
+                          { label: 'Customers', value: filteredC.filter(c => isClient(c.client_type || '')).length, color: 'text-green-600', bg: 'bg-green-50', icon: <Briefcase size={18} />, items: filteredC.filter(c => isClient(c.client_type || '')) },
+                          { label: 'Discarded', value: filteredC.filter(c => isDiscarded(c.client_type || '')).length, color: 'text-gray-400', bg: 'bg-gray-100', icon: <XCircle size={18} />, items: filteredC.filter(c => isDiscarded(c.client_type || '')) },
+                          { label: 'Active Pipeline', value: overviewPipelineRows.length, color: 'text-orange-600', bg: 'bg-orange-50', icon: <Layers size={18} />, items: overviewPipelineRows }
+                        ];
 
                         return (
-                          <div key={`priorities-${owner}`} className="bg-white rounded-2xl shadow-sm border border-orbe-tan/50 overflow-hidden flex flex-col">
-                            <div className="p-4 border-b border-orbe-tan/30 bg-orbe-green/5 flex items-center gap-3">
-                              <div className="w-10 h-10 rounded-full bg-orbe-green flex items-center justify-center text-white font-black text-sm shadow-sm">
-                                {(owner || '?')[0]}
+                          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 pt-4 border-t border-orbe-tan/10">
+                            {kpis.map((kpi, index) => (
+                              <div 
+                                key={safeKey('overview-kpi', kpi.label, index)} 
+                                className="bg-white p-4 rounded-2xl border border-orbe-tan/30 shadow-sm flex flex-col gap-3 relative overflow-hidden group hover:scale-[1.02] transition-all cursor-pointer" 
+                                onClick={() => setSelectedDetail({ type: 'kpi', label: kpi.label, items: kpi.items })}
+                              >
+                                <div className={`w-10 h-10 rounded-xl ${kpi.bg} ${kpi.color} flex items-center justify-center shadow-sm`}>
+                                  {kpi.icon}
+                                </div>
+                                <div>
+                                  <h3 className="text-xl font-black text-orbe-green leading-none">{kpi.value}</h3>
+                                  <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest mt-1.5 leading-tight">{kpi.label}</p>
+                                </div>
                               </div>
-                              <div>
-                                <h4 className="text-sm font-black text-orbe-green uppercase tracking-tight">{owner}</h4>
-                                <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest leading-none mt-1">Priority Ranking</p>
-                              </div>
-                            </div>
-                            
-                            <div className="overflow-auto bg-white max-h-[600px]">
-                              <table className="w-full text-left border-collapse">
-                                <thead className="bg-[#fcfaf7] sticky top-0 border-b border-orbe-tan/30 z-10">
-                                  <tr>
-                                    <th className="p-3 text-[9px] font-bold text-gray-400 uppercase tracking-widest">Company</th>
-                                    <th className="p-3 text-[9px] font-bold text-gray-400 uppercase tracking-widest">Next Action</th>
-                                    <th className="p-3 text-[9px] font-bold text-gray-400 uppercase tracking-widest">Priority</th>
-                                    <th className="p-3 text-[9px] font-bold text-gray-400 uppercase tracking-widest text-right">Status</th>
-                                  </tr>
-                                </thead>
-                                <tbody className="divide-y divide-orbe-tan/10 text-[11px]">
-                                  {ownerTasks.length === 0 ? (
-                                    <tr>
-                                      <td colSpan={4} className="p-10 text-center text-[11px] text-gray-400 italic">No priorities defined</td>
-                                    </tr>
-                                  ) : (
-                                    ownerTasks.map(item => (
-                                      <tr key={`prio-row-${item.id}`} className="hover:bg-orbe-cream/20 transition-colors">
-                                        <td className="p-3">
-                                          <div className="font-bold text-orbe-green">{item.company_name}</div>
-                                        </td>
-                                        <td className="p-3 text-gray-500 italic">
-                                          {item.last_activity}
-                                        </td>
-                                        <td className="p-3">
-                                          <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest ${
-                                            item.priority === 'Urgent' ? 'bg-red-50 text-red-600 border border-red-100' :
-                                            item.priority === 'High' ? 'bg-red-50 text-red-600 border border-red-100' :
-                                            item.priority === 'Medium' ? 'bg-orange-50 text-orange-600 border border-orange-100' :
-                                            'bg-blue-50 text-blue-600 border border-blue-100'
-                                          }`}>
-                                            {item.priority}
-                                          </span>
-                                        </td>
-                                        <td className="p-3 text-right">
-                                          <span className={`text-[8px] font-bold uppercase tracking-tighter ${
-                                            item.status === 'Client' ? 'text-green-600' : 'text-orbe-tan'
-                                          }`}>
-                                            {item.status || 'Pot.'}
-                                          </span>
-                                        </td>
-                                      </tr>
-                                    ))
-                                  )}
-                                </tbody>
-                              </table>
-                            </div>
+                            ))}
                           </div>
                         );
-                      })}
-                    </div>
-                  </div>
-                )}
-
-                {dashboardTab === 'overview' && (
-                  <div className="space-y-8 animate-in fade-in duration-500 pb-20">
-                    {/* FILTER SECTION */}
-                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-4 rounded-2xl border border-orbe-tan/30 shadow-sm">
-                      <div>
-                        <h4 className="text-sm font-black text-orbe-green uppercase tracking-tight">Performance Overview</h4>
-                        <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mt-0.5">Global analytics and priority tracking</p>
-                      </div>
-                      <div className="flex p-1 bg-gray-100 rounded-xl gap-1 w-full md:w-auto">
-                        {USERS.map(user => (
-                          <button 
-                            key={`overview-filter-${user}`}
-                            onClick={() => setOverviewOwnerFilter(user)}
-                            className={`flex-1 md:flex-none px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${overviewOwnerFilter === user ? 'bg-orbe-green text-white shadow-sm' : 'text-orbe-green/40 hover:text-orbe-green/60'}`}
-                          >
-                            {user}
-                          </button>
-                        ))}
-                      </div>
+                      })()}
                     </div>
 
-                    {/* 1. SECCIÓN VISUAL - MÉTRICAS CRÍTICAS COMPACTAS CON TENDENCIA */}
-                    {(() => {
-                      const filteredPipeline = pipeline.filter(p => overviewOwnerFilter === 'All' || p.owner_id === overviewOwnerFilter);
-                      
-                      return (
-                        <>
-                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                          {/* Total Overdue */}
-                          <div className="bg-white p-5 rounded-2xl border border-orbe-tan/30 shadow-sm flex flex-col items-start justify-center gap-2 relative overflow-hidden group">
-                            <div className="absolute -right-2 -bottom-2 w-16 h-16 bg-red-50 rounded-full blur-xl group-hover:bg-red-100 transition-all" />
-                            <div className="p-2 bg-red-50 text-red-500 rounded-xl">
-                              <Clock size={16} />
-                            </div>
-                            <div>
-                              <h3 className="text-2xl font-black text-orbe-green leading-none">
-                                {filteredPipeline.filter(p => isOverdue(p.next_action_date) && String(p.action_status || '').trim().toLowerCase() !== 'done').length}
-                              </h3>
-                              <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mt-1">Actions Overdue</p>
-                            </div>
-                          </div>
+                    {/* 8 STAGE BREAKDOWN GRID */}
+                    <div className="space-y-6">
+                      <div className="flex items-center gap-3 px-1">
+                        <Layers size={20} className="text-orbe-green" />
+                        <h3 className="text-lg font-black text-orbe-green uppercase tracking-tight">Pipeline Stage Breakdown</h3>
+                      </div>
 
-                          {/* Scheduled Today */}
-                          <div className="bg-white p-5 rounded-2xl border border-orbe-tan/30 shadow-sm flex flex-col items-start justify-center gap-2 relative overflow-hidden group">
-                            <div className="absolute -right-2 -bottom-2 w-16 h-16 bg-blue-50 rounded-full blur-xl group-hover:bg-blue-100 transition-all" />
-                            <div className="p-2 bg-blue-50 text-blue-500 rounded-xl">
-                              <Calendar size={16} />
-                            </div>
-                            <div>
-                              <h3 className="text-2xl font-black text-orbe-green leading-none">
-                                {filteredPipeline.filter(p => {
-                                  const date = parseFlexibleDate(p.next_action_date);
-                                  if (!date) return false;
-                                  const today = new Date();
-                                  return date.getDate() === today.getDate() && date.getMonth() === today.getMonth() && date.getFullYear() === today.getFullYear() && String(p.action_status || '').trim().toLowerCase() !== 'done';
-                                }).length}
-                              </h3>
-                              <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mt-1">Actions Today</p>
-                            </div>
-                          </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                        {PIPELINE_STAGE_CARDS.map((stage, idx) => {
+                          const items = overviewData.overviewPipelineRows.filter(p => p.effectiveStage === stage);
+                          const pending = items.filter(p => p.action_status !== 'Done').length;
+                          const done = items.filter(p => p.action_status === 'Done').length;
+                          const overdue = items.filter(p => p.isOverdue).length;
 
-                          {/* Postponed (Last Week) */}
-                          <div className="bg-white p-5 rounded-2xl border border-orbe-tan/30 shadow-sm flex flex-col items-start justify-center gap-2 relative overflow-hidden group">
-                            <div className="absolute -right-2 -bottom-2 w-16 h-16 bg-amber-50 rounded-full blur-xl group-hover:bg-amber-100 transition-all" />
-                            <div className="p-2 bg-amber-50 text-amber-500 rounded-xl">
-                              <History size={16} />
-                            </div>
-                            <div>
-                              <h3 className="text-2xl font-black text-orbe-green leading-none">
-                                {filteredPipeline.filter(p => {
-                                  const d = parseFlexibleDate(p.updated_at || p.created_at);
-                                  const limit = new Date();
-                                  limit.setDate(limit.getDate() - 7);
-                                  return d && d >= limit && (String(p.action_status || '').toLowerCase().includes('postpone'));
-                                }).length}
-                              </h3>
-                              <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mt-1">Recently Postponed</p>
-                            </div>
-                          </div>
+                          const isSoftRed = stage === 'Not interested';
 
-                          {/* High Priority Pending */}
-                          <div className="bg-white p-5 rounded-2xl border border-orbe-tan/30 shadow-sm flex flex-col items-start justify-center gap-2 relative overflow-hidden group">
-                            <div className="absolute -right-2 -bottom-2 w-16 h-16 bg-orbe-green/5 rounded-full blur-xl group-hover:bg-orbe-green/10 transition-all" />
-                            <div className="p-2 bg-orbe-green/10 text-orbe-green rounded-xl">
-                              <Star size={16} />
-                            </div>
-                            <div>
-                              <h3 className="text-2xl font-black text-orbe-green leading-none">
-                                {filteredPipeline.filter(p => (p.priority === 'Urgent' || p.priority === 'High') && String(p.action_status || '').trim().toLowerCase() !== 'done').length}
-                              </h3>
-                              <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mt-1">Critical Tasks</p>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                          {/* TOP PRIORITIES TODAY */}
-                          <div className="bg-white rounded-3xl border border-orbe-tan/30 shadow-sm overflow-hidden flex flex-col">
-                            <div className="p-5 border-b border-orbe-tan/20 flex justify-between items-center bg-gray-50/50">
-                              <div>
-                                <h4 className="text-xs font-black text-orbe-green uppercase tracking-widest">Focus List: Today</h4>
-                                <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Immediate action required</p>
+                          return (
+                            <motion.div
+                              key={safeKey('stage-card', stage, idx)}
+                              whileHover={{ y: -5 }}
+                              onClick={() => setSelectedDetail({ type: 'stage', label: `Stage: ${stage}`, items })}
+                              className={`p-6 rounded-3xl border shadow-sm cursor-pointer transition-all ${
+                                isSoftRed 
+                                  ? 'bg-red-50/50 border-red-100 hover:border-red-200' 
+                                  : 'bg-white border-orbe-tan/30 hover:border-orbe-green/30'
+                              }`}
+                            >
+                              <div className="flex justify-between items-start mb-4">
+                                <h4 className={`text-xs font-black uppercase tracking-widest ${isSoftRed ? 'text-red-600' : 'text-orbe-green'}`}>
+                                  {stage}
+                                </h4>
+                                <ChevronRight size={14} className={isSoftRed ? 'text-red-400' : 'text-orbe-tan'} />
                               </div>
-                              <Target size={18} className="text-red-500" />
-                            </div>
-                            <div className="divide-y divide-orbe-tan/10 overflow-y-auto max-h-[300px]">
-                              {filteredPipeline
-                                .filter(p => {
-                                  const d = parseFlexibleDate(p.next_action_date);
-                                  const today = new Date();
-                                  return d && d <= today && String(p.action_status || '').trim().toLowerCase() !== 'done';
-                                })
-                                .sort((a, b) => (PRIORITIES[a.priority as Priority] || 999) - (PRIORITIES[b.priority as Priority] || 999))
-                                .slice(0, 10)
-                                .map(item => (
-                                  <div key={`prio-item-${item.id}`} className="p-4 hover:bg-orbe-cream/20 transition-all flex items-center justify-between group">
-                                    <div className="flex items-center gap-3">
-                                      <div className={`w-1 h-8 rounded-full ${item.priority === 'Urgent' ? 'bg-red-500' : item.priority === 'High' ? 'bg-orange-500' : 'bg-blue-400'}`} />
-                                      <div>
-                                        <p className="font-bold text-orbe-green text-sm group-hover:translate-x-1 transition-transform">{item.company_name}</p>
-                                        <p className="text-[10px] text-gray-500 font-medium italic truncate max-w-[200px]">{item.last_activity}</p>
-                                      </div>
-                                    </div>
-                                    <div className="text-right">
-                                      <p className="text-[10px] font-black text-orbe-green uppercase tracking-tighter">{item.owner_id}</p>
-                                      <span className={`text-[8px] font-black uppercase px-2 py-0.5 rounded ${isOverdue(item.next_action_date) ? 'bg-red-500 text-white' : 'bg-gray-100 text-gray-400'}`}>
-                                        {isOverdue(item.next_action_date) ? 'Overdue' : 'Today'}
-                                      </span>
-                                    </div>
+
+                              <div className="space-y-4">
+                                <div>
+                                  <div className="text-3xl font-black text-orbe-green leading-none">{items.length}</div>
+                                  <div className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mt-2 px-1 border-l-2 border-orbe-tan/20">Pipeline records</div>
+                                </div>
+
+                                <div className="grid grid-cols-3 gap-2 pt-2 border-t border-gray-50">
+                                  <div className="text-center">
+                                    <div className="text-[10px] font-black text-blue-600 leading-none">{pending}</div>
+                                    <div className="text-[7px] font-bold text-gray-400 uppercase mt-1">Pending</div>
                                   </div>
-                                ))}
-                              {filteredPipeline.filter(p => {
-                                const d = parseFlexibleDate(p.next_action_date);
-                                const today = new Date();
-                                return d && d <= today && String(p.action_status || '').trim().toLowerCase() !== 'done';
-                              }).length === 0 && (
-                                <div className="p-10 text-center text-gray-400 italic text-sm">No tasks pending for today. Smooth day ahead!</div>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* PIPELINE HEALTH & DISTRIBUTION */}
-                          <div className="bg-white rounded-3xl border border-orbe-tan/30 shadow-sm overflow-hidden flex flex-col p-6 space-y-6">
-                            <div>
-                              <h4 className="text-xs font-black text-orbe-green uppercase tracking-widest mb-1">Pipeline Health</h4>
-                              <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Efficiency & progress distribution</p>
-                            </div>
-                            
-                            <div className="grid grid-cols-2 gap-4">
-                              <div className="p-4 bg-[#F2F9F2] rounded-2xl border border-[#E0F2E0]">
-                                <p className="text-[9px] font-bold text-[#3D7A3C] uppercase tracking-widest mb-1">Conversion Potential</p>
-                                <h5 className="text-2xl font-black text-[#3D7A3C]">{filteredPipeline.filter(p => p.status === 'Potential client').length}</h5>
-                                <p className="text-[8px] text-[#3D7A3C]/70 mt-1 italic">Active prospects awaiting follow-up</p>
-                              </div>
-                              <div className="p-4 bg-orange-50 rounded-2xl border border-orange-100">
-                                <p className="text-[9px] font-bold text-orange-600 uppercase tracking-widest mb-1">Active Deals</p>
-                                <h5 className="text-2xl font-black text-orange-600">{filteredPipeline.filter(p => p.status === 'Client').length}</h5>
-                                <p className="text-[8px] text-orange-600/70 mt-1 italic">Ongoing managed accounts</p>
-                              </div>
-                            </div>
-
-                            <div className="space-y-4">
-                              <div className="flex justify-between items-end">
-                                <h5 className="text-[10px] font-black text-orbe-green uppercase">Action Status Distribution</h5>
-                              </div>
-                              <div className="h-4 flex rounded-full overflow-hidden shadow-inner bg-gray-100">
-                                {[
-                                  { label: 'Done', color: 'bg-orbe-green', count: filteredPipeline.filter(p => String(p.action_status || '').toLowerCase() === 'done').length },
-                                  { label: 'Pending', color: 'bg-blue-400', count: filteredPipeline.filter(p => String(p.action_status || '').toLowerCase() === 'pending' || !p.action_status).length },
-                                  { label: 'Postponed', color: 'bg-amber-400', count: filteredPipeline.filter(p => String(p.action_status || '').toLowerCase().includes('postpone')).length }
-                                ].map(seg => {
-                                  const pct = filteredPipeline.length > 0 ? (seg.count / filteredPipeline.length) * 100 : 0;
-                                  return (
-                                    <div 
-                                      key={seg.label}
-                                      title={`${seg.label}: ${seg.count}`}
-                                      style={{ width: `${pct}%` }} 
-                                      className={`${seg.color} transition-all border-r border-white/20 last:border-0`} 
-                                    />
-                                  );
-                                })}
-                              </div>
-                              <div className="flex gap-4">
-                                <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-orbe-green" /><span className="text-[8px] font-bold text-gray-500 uppercase">Done</span></div>
-                                <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-blue-400" /><span className="text-[8px] font-bold text-gray-500 uppercase">Pending</span></div>
-                                <div className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-amber-400" /><span className="text-[8px] font-bold text-gray-500 uppercase">Postponed</span></div>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* 2. NEXT 7 DAYS TIMELINE (FILTERED) */}
-                        <div className="bg-white p-6 rounded-3xl border border-orbe-tan/30 shadow-sm relative overflow-hidden">
-                          {/* Decor sutil */}
-                          <div className="absolute top-0 right-0 w-32 h-32 bg-orbe-tan/5 rounded-bl-full -mr-16 -mt-16" />
-                          
-                          <div className="flex items-center justify-between mb-6 relative z-10">
-                            <div>
-                              <h4 className="text-sm font-black text-orbe-green uppercase tracking-tight">Timeline: Next 7 Days</h4>
-                              <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Scheduled activity distribution</p>
-                            </div>
-                            <div className="px-3 py-1 bg-orbe-green/5 rounded-full border border-orbe-tan/20 flex items-center gap-2">
-                              <div className="w-2 h-2 rounded-full bg-orbe-green animate-pulse" />
-                              <span className="text-[8px] font-black text-orbe-green uppercase">Live Calendar View</span>
-                            </div>
-                          </div>
-                          
-                          <div className="grid grid-cols-7 gap-3 relative z-10">
-                            {Array.from({ length: 7 }).map((_, i) => {
-                              const date = new Date();
-                              date.setDate(date.getDate() + i);
-                              const isToday = i === 0;
-                              const dayName = date.toLocaleDateString('en-US', { weekday: 'short' });
-                              const dayNum = date.getDate();
-                              
-                              const count = filteredPipeline.filter(p => {
-                                const d = parseFlexibleDate(p.next_action_date);
-                                return d && d.getDate() === dayNum && d.getMonth() === date.getMonth() && d.getFullYear() === date.getFullYear() && String(p.action_status || '').trim().toLowerCase() !== 'done';
-                              }).length;
-
-                              const maxCount = 10; 
-                              const height = Math.min(100, (count / maxCount) * 100);
-
-                              return (
-                                <div key={`timeline-${i}`} className="flex flex-col items-center gap-3 group">
-                                  <div className="flex-1 w-full bg-gray-50 rounded-xl relative overflow-hidden min-h-[140px] border border-gray-100 flex flex-col justify-end p-1 hover:border-orbe-tan/30 transition-all">
-                                    <motion.div 
-                                      initial={{ height: 0 }}
-                                      animate={{ height: `${height}%` }}
-                                      className={`w-full rounded-lg transition-all ${isToday ? 'bg-orbe-green shadow-lg shadow-orbe-green/20' : 'bg-orbe-tan/40'}`}
-                                    />
-                                    {count > 0 && (
-                                      <div className="absolute inset-0 flex items-center justify-center">
-                                        <span className={`text-sm font-black ${isToday ? 'text-white' : 'text-orbe-green'} drop-shadow-sm`}>{count}</span>
-                                      </div>
-                                    )}
+                                  <div className="text-center">
+                                    <div className="text-[10px] font-black text-green-600 leading-none">{done}</div>
+                                    <div className="text-[7px] font-bold text-gray-400 uppercase mt-1">Done</div>
                                   </div>
-                                  <div className="text-center group-hover:scale-110 transition-transform">
-                                    <p className={`text-[8px] font-black uppercase tracking-widest ${isToday ? 'text-orbe-green' : 'text-gray-400'}`}>{dayName}</p>
-                                    <p className={`text-[10px] font-black ${isToday ? 'text-orbe-green font-black scale-110' : 'text-gray-600'}`}>{dayNum}</p>
+                                  <div className="text-center">
+                                    <div className={`text-[10px] font-black leading-none ${overdue > 0 ? 'text-red-500' : 'text-gray-300'}`}>{overdue}</div>
+                                    <div className="text-[7px] font-bold text-gray-400 uppercase mt-1">Overdue</div>
                                   </div>
                                 </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                        </>
-                      );
-                    })()}
-                  </div>
+                              </div>
+                            </motion.div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </motion.div>
                 )}
 
-                {dashboardTab === 'activity' && (
+                    {dashboardTab === 'activity' && (
                   <div className="space-y-8 animate-in fade-in duration-500 pb-20">
                     {/* CONTROL DE ACTIVIDAD */}
                     <div className="space-y-4">
@@ -2885,8 +2967,22 @@ export default function App() {
                                   </div>
                                 </div>
 
-                                <div className="flex flex-col items-end">
-                                  <div className="flex items-center gap-1.5 bg-orange-50 px-3 py-1.5 rounded-full border border-orange-100">
+                                <button 
+                                  onClick={() => {
+                                    const postponedItems = pipeline.filter(p => 
+                                      String(p.owner_id || '').trim().toLowerCase() === owner.toLowerCase() && 
+                                      (String(p.action_status || '').trim().toLowerCase() === 'postpone' || 
+                                       String(p.action_status || '').trim().toLowerCase() === 'postponed')
+                                    ).sort((a,b) => {
+                                      const dateA = (parseFlexibleDate(a.created_at) || parseFlexibleDate(a.last_contact_date) || parseFlexibleDate(a.next_action_date))?.getTime() || 0;
+                                      const dateB = (parseFlexibleDate(b.created_at) || parseFlexibleDate(b.last_contact_date) || parseFlexibleDate(b.next_action_date))?.getTime() || 0;
+                                      return dateB - dateA;
+                                    });
+                                    setSelectedPostponedList({ owner, items: postponedItems });
+                                  }}
+                                  className="flex flex-col items-end hover:bg-orange-100/30 p-2 rounded-2xl transition-all group/postpone"
+                                >
+                                  <div className="flex items-center gap-1.5 bg-orange-50 px-3 py-1.5 rounded-full border border-orange-100 group-hover/postpone:bg-orange-100">
                                     <Clock size={12} className="text-orange-500" />
                                     <span className="text-[10px] font-black text-orange-600 uppercase tracking-widest">Postponed Balance</span>
                                   </div>
@@ -2896,7 +2992,7 @@ export default function App() {
                                       {p7.trend > 0 ? '↑' : p7.trend < 0 ? '↓' : ''}{Math.abs(p7.trend)}% vs prev week
                                     </span>
                                   </div>
-                                </div>
+                                </button>
                               </div>
 
                               {/* Activity Buckets */}
@@ -3095,116 +3191,452 @@ export default function App() {
                     </div>
                   </div>
                 )}
-            </motion.div>
+              </motion.div>
             )}
 
-                {/* ACTIVITY DETAIL DRAWER */}
-                <AnimatePresence>
-                  {selectedActivityList && (
-                    <div className="fixed inset-0 z-[60] flex justify-end">
-                      <motion.div 
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        onClick={() => setSelectedActivityList(null)}
-                        className="absolute inset-0 bg-black/40 backdrop-blur-sm shadow-2xl"
-                      />
-                      <motion.div 
-                        initial={{ x: '100%' }}
-                        animate={{ x: 0 }}
-                        exit={{ x: '100%' }}
-                        transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-                        className="relative w-full max-w-md bg-white h-full shadow-2xl flex flex-col border-l border-orbe-tan/30 overflow-hidden"
-                      >
-                        {/* Header Drawer */}
-                        <div className="p-6 border-b border-orbe-tan/20 flex items-center justify-between bg-orbe-green text-white">
-                          <div className="flex items-center gap-3">
-                            <div className="p-2 bg-white/10 rounded-xl">
-                              <History size={20} />
-                            </div>
-                            <div>
-                              <h3 className="font-black text-lg uppercase tracking-tight">{selectedActivityList.owner} - Activities</h3>
-                              <p className="text-[10px] font-bold text-white/60 uppercase tracking-widest">Last {selectedActivityList.days} days summary</p>
-                            </div>
+            {view === 'weekly' && (
+              <motion.div 
+                key="weekly-view"
+                initial={{ opacity: 0, scale: 0.98 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 1.02 }}
+                className="space-y-6 flex-1 flex flex-col overflow-y-auto pr-2"
+              >
+                 <div className="space-y-8 animate-in fade-in duration-500 pb-20">
+                    {/* 1. HEADER & FILTER */}
+                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-6 rounded-3xl border border-orbe-tan/30 shadow-sm relative overflow-hidden">
+                      <div className="relative z-10">
+                        <div className="flex items-center gap-3 mb-1">
+                          <div className="p-2 bg-orbe-green text-white rounded-xl shadow-lg shadow-orbe-green/20">
+                            <ShieldCheck size={20} />
                           </div>
-                          <button 
-                            onClick={() => setSelectedActivityList(null)}
-                            className="p-2 hover:bg-white/10 rounded-full transition-colors"
-                          >
-                            <XCircle size={24} />
-                          </button>
+                          <h4 className="text-xl font-black text-orbe-green uppercase tracking-tight">Weekly Priorities</h4>
+                        </div>
+                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
+                          Execution plan • {getToday().toLocaleDateString('en-GB', { day: '2-digit', month: 'short' })} - {(() => {
+                            const d = getToday();
+                            const days = weeklyDateRange === 'Next 30 days' ? 30 : weeklyDateRange === 'Next 14 days' ? 14 : 7;
+                            d.setDate(d.getDate() + days);
+                            return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+                          })()}
+                        </p>
+                      </div>
+                      
+                      <div className="flex flex-col md:flex-row gap-2 relative z-10 w-full md:w-auto">
+                        {/* Selector de Ventana Rolling */}
+                        <div className="flex p-1 bg-gray-100 rounded-xl gap-1">
+                          {['Next 7 days', 'Next 14 days', 'Next 30 days'].map((range, index) => (
+                            <button 
+                              key={safeKey('weekly-range', range, index)}
+                              onClick={() => setWeeklyDateRange(range)}
+                              className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-tight transition-all ${weeklyDateRange === range ? 'bg-white text-orbe-green shadow-sm' : 'text-orbe-green/40 hover:text-orbe-green/60'}`}
+                            >
+                              {range.split(' ')[1]} Days
+                            </button>
+                          ))}
                         </div>
 
-                        <div className="flex-1 overflow-y-auto p-6 space-y-8 scrollbar-thin scrollbar-thumb-orbe-tan/20">
-                          {/* Mini Pie Chart Breakdown */}
-                          <div className="space-y-4">
-                            <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-2">
-                              <Target size={12} /> Action Type Distribution
-                            </h4>
-                            <div className="flex flex-wrap gap-2">
-                              {/* Calculate groups */}
-                              {Object.entries(
-                                selectedActivityList.items.reduce((acc: any, item) => {
-                                  const name = item.last_activity || 'Others';
-                                  acc[name] = (acc[name] || 0) + 1;
-                                  return acc;
-                                }, {})
-                              ).map(([name, count]: [string, any]) => {
-                                const percentage = Math.round((count / selectedActivityList.items.length) * 100);
+                        <div className="flex p-1 bg-gray-100 rounded-xl gap-1">
+                          {USERS.map((user, index) => (
+                            <button 
+                              key={safeKey('command-filter', user, index)}
+                              onClick={() => setCommandSellerFilter(user)}
+                              className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-tight transition-all ${commandSellerFilter === user ? 'bg-orbe-green text-white shadow-sm' : 'text-orbe-green/40 hover:text-orbe-green/60'}`}
+                            >
+                              {user}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    {(() => {
+                      const today = getToday();
+                      const rollingDays = weeklyDateRange === 'Next 30 days' ? 30 : weeklyDateRange === 'Next 14 days' ? 14 : 7;
+                      
+                      const filteredPipeline = pipeline.filter(p => {
+                        const matchesSeller = commandSellerFilter === 'All' || p.owner_id === commandSellerFilter;
+                        return matchesSeller && !isDone(p.action_status);
+                      });
+
+                      const overdueItems = filteredPipeline.filter(p => isOverdue(p.next_action_date, p.action_status))
+                        .sort((a,b) => {
+                          const prioA = PRIORITIES[a.priority as Priority] || 99;
+                          const prioB = PRIORITIES[b.priority as Priority] || 99;
+                          if (prioA !== prioB) return prioA - prioB;
+                          const dateA = parseFlexibleDate(a.next_action_date)?.getTime() || 0;
+                          const dateB = parseFlexibleDate(b.next_action_date)?.getTime() || 0;
+                          return dateA - dateB;
+                        });
+
+                      // KPI calculations
+                      const urgentCount = filteredPipeline.filter(p => p.priority === 'Urgent' && isWithinNextDays(p.next_action_date, rollingDays, p.action_status)).length;
+                      const highCount = filteredPipeline.filter(p => p.priority === 'High' && isWithinNextDays(p.next_action_date, rollingDays, p.action_status)).length;
+                      const windowItemsCount = filteredPipeline.filter(p => isWithinNextDays(p.next_action_date, rollingDays, p.action_status)).length;
+                      const missingDateCount = filteredPipeline.filter(p => isMissingNextActionDate(p)).length;
+                      const dueTodayCount = filteredPipeline.filter(p => isDueToday(p.next_action_date, p.action_status)).length;
+
+                      return (
+                        <>
+                          {/* 2. CLEAN THE SLATE */}
+                          <div className={`rounded-3xl border p-6 transition-all ${overdueItems.length > 0 ? 'bg-red-50/50 border-red-100 shadow-sm' : 'bg-green-50/30 border-green-100'}`}>
+                            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+                              <div className="flex items-center gap-4">
+                                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-white ${overdueItems.length > 0 ? 'bg-red-500 shadow-lg shadow-red-500/20' : 'bg-green-500'}`}>
+                                  {overdueItems.length > 0 ? <AlertTriangle size={24} /> : <CheckCircle2 size={24} />}
+                                </div>
+                                <div>
+                                  <h5 className={`text-lg font-black uppercase tracking-tight ${overdueItems.length > 0 ? 'text-red-700' : 'text-green-700'}`}>Clean the Slate</h5>
+                                  <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mt-1">
+                                    {overdueItems.length > 0 
+                                      ? `${commandSellerFilter === 'All' ? 'The team has' : commandSellerFilter + ' has'} ${overdueItems.length} overdue actions. Resolve them now to unlock the week.`
+                                      : "No overdue actions. The slate is clean."}
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
+
+                            {overdueItems.length > 0 && (
+                              <div className="bg-white rounded-2xl border border-red-100 overflow-hidden shadow-sm">
+                                <div className="overflow-x-auto hidden md:block">
+                                  <table className="w-full text-left text-[11px]">
+                                    <thead className="bg-red-50 text-red-700">
+                                      <tr>
+                                        <th className="p-3 text-[9px] font-black uppercase tracking-widest">Company</th>
+                                        <th className="p-3 text-[9px] font-black uppercase tracking-widest">Owner</th>
+                                        <th className="p-3 text-[9px] font-black uppercase tracking-widest">Next Action</th>
+                                        <th className="p-3 text-[9px] font-black uppercase tracking-widest">Priority</th>
+                                        <th className="p-3 text-[9px] font-black uppercase tracking-widest">Stage</th>
+                                        <th className="p-3 text-[9px] font-black uppercase tracking-widest">Due Date</th>
+                                        <th className="p-3 text-[9px] font-black uppercase tracking-widest">Quick Actions</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-red-50">
+                                      {overdueItems.slice(0, 5).map((item, index) => {
+                                        const d = parseFlexibleDate(item.next_action_date);
+                                        const daysOverdue = d ? Math.floor((today.getTime() - d.getTime()) / (1000 * 3600 * 24)) : 0;
+                                        return (
+                                          <tr key={getPipelineKey(item, 'overdue-row', index)} className="hover:bg-red-50/30 transition-colors">
+                                            <td className="p-3 font-bold text-orbe-green">{item.company_name}</td>
+                                            <td className="p-3">
+                                               <span className="px-2 py-0.5 bg-gray-100 rounded text-[8px] font-black uppercase">{item.owner_id}</span>
+                                            </td>
+                                            <td className="p-3 italic text-gray-500">{item.last_activity}</td>
+                                            <td className="p-3">
+                                              <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase ${item.priority === 'Urgent' ? 'bg-red-100 text-red-600' : 'bg-orange-100 text-orange-600'}`}>
+                                                {item.priority}
+                                              </span>
+                                            </td>
+                                            <td className="p-3 text-gray-400 font-bold uppercase text-[9px]">{item.status}</td>
+                                            <td className="p-3">
+                                              <div className="flex flex-col">
+                                                <span className="font-bold text-red-600">{formatDateSafe(item.next_action_date)}</span>
+                                                <span className="text-[9px] text-red-400 font-black">{daysOverdue} days late</span>
+                                              </div>
+                                            </td>
+                                            <td className="p-3">
+                                              <div className="flex items-center gap-1">
+                                                <button 
+                                                  onClick={() => setTaskToAccomplish(item)}
+                                                  className="p-1.5 bg-orbe-green text-white rounded-lg hover:brightness-110 transition-all"
+                                                  title="Resolve Action"
+                                                >
+                                                  <CheckSquare size={14} />
+                                                </button>
+                                                <button 
+                                                  onClick={() => setPostponeItem(item)}
+                                                  className="p-1.5 bg-amber-50 text-amber-600 border border-amber-200 rounded-lg hover:bg-amber-100 transition-all"
+                                                  title="Postpone"
+                                                >
+                                                  <Clock size={14} />
+                                                </button>
+                                              </div>
+                                            </td>
+                                          </tr>
+                                        );
+                                      })}
+                                    </tbody>
+                                  </table>
+                                </div>
+
+                                {/* MOBILE VERSION: CARDS (Overdue) */}
+                                <div className="md:hidden divide-y divide-red-50">
+                                  {overdueItems.slice(0, 5).map((item, index) => {
+                                    const d = parseFlexibleDate(item.next_action_date);
+                                    const daysOverdue = d ? Math.floor((today.getTime() - d.getTime()) / (1000 * 3600 * 24)) : 0;
+                                    return (
+                                      <div key={getPipelineKey(item, 'overdue-mobile-card', index)} className="p-4 space-y-3">
+                                        <div className="flex justify-between items-start">
+                                          <div>
+                                            <h6 className="font-black text-orbe-green text-[13px] uppercase tracking-tight">{item.company_name}</h6>
+                                            <div className="flex items-center gap-2 mt-1">
+                                              <span className="px-1.5 py-0.5 bg-gray-100 rounded text-[7px] font-black uppercase text-gray-400">{item.owner_id}</span>
+                                              <span className="text-[7px] font-black text-gray-300 uppercase tracking-widest">{item.status}</span>
+                                            </div>
+                                          </div>
+                                          <div className="flex flex-col items-end text-right">
+                                            <span className="text-[11px] font-bold text-red-600">{formatDateSafe(item.next_action_date)}</span>
+                                            <span className="text-[9px] text-red-400 font-black uppercase">{daysOverdue} days late</span>
+                                          </div>
+                                        </div>
+                                        <p className="text-[11px] text-gray-500 italic">"{item.last_activity}"</p>
+                                        <div className="flex gap-2">
+                                          <button 
+                                            onClick={() => setTaskToAccomplish(item)}
+                                            className="flex-1 py-3 bg-orbe-green text-white rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 shadow-sm active:scale-95 transition-all"
+                                          >
+                                            <CheckCircle size={16} /> Resolve
+                                          </button>
+                                          <button 
+                                            onClick={() => setPostponeItem(item)}
+                                            className="px-4 py-3 bg-amber-50 text-amber-600 border border-amber-200 rounded-xl active:bg-amber-100 transition-all"
+                                          >
+                                            <Clock size={16} />
+                                          </button>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                                {overdueItems.length > 5 && (
+                                  <div className="p-3 bg-red-50/50 border-t border-red-50 text-center">
+                                    <p className="text-[10px] font-bold text-red-600 uppercase tracking-widest">And {overdueItems.length - 5} more overdue actions...</p>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* 3. KPI SUMMARY */}
+                          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                            {[
+                              { label: 'Due Today', val: dueTodayCount, icon: <CheckSquare />, color: 'text-blue-500', bg: 'bg-blue-50' },
+                              { label: 'Overdue', val: overdueItems.length, icon: <AlertCircle />, color: 'text-red-500', bg: 'bg-red-50' },
+                              { label: 'Upcoming', val: windowItemsCount, icon: <Calendar />, color: 'text-orbe-green', bg: 'bg-orbe-green/5' },
+                              { label: 'Urgent', val: urgentCount, icon: <Zap />, color: 'text-red-600', bg: 'bg-orange-50' },
+                              { label: 'Pipeline Gaps', val: missingDateCount, icon: <Filter />, color: 'text-purple-500', bg: 'bg-purple-50' },
+                            ].map((kpi, index) => (
+                              <div key={safeKey('weekly-kpi', kpi.label, index)} className="bg-white p-4 rounded-2xl border border-orbe-tan/30 shadow-sm group hover:scale-[1.02] transition-all">
+                                <div className={`w-8 h-8 rounded-lg ${kpi.bg} ${kpi.color} flex items-center justify-center mb-3`}>
+                                  {React.cloneElement(kpi.icon as React.ReactElement, { size: 16 })}
+                                </div>
+                                <h3 className="text-xl font-black text-orbe-green leading-none">{kpi.val}</h3>
+                                <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest mt-1">{kpi.label}</p>
+                              </div>
+                            ))}
+                          </div>
+
+                          {/* 4. EXECUTION TIMELINE (ROLLING) */}
+                          <div className="space-y-6">
+                            <div className="flex items-center justify-between px-1">
+                                <h4 className="text-lg font-black text-orbe-green uppercase tracking-tight">Execution Timeline</h4>
+                                <div className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Operation focus</div>
+                            </div>
+
+                            {/* DESKTOP TIMELINE */}
+                            <div className="hidden md:grid grid-cols-7 gap-4">
+                              {Array.from({ length: 7 }).map((_, i) => {
+                                const targetDate = new Date(today);
+                                targetDate.setDate(targetDate.getDate() + i);
+                                
+                                const dayName = i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : targetDate.toLocaleDateString('en-US', { weekday: 'long' });
+                                const dayDate = targetDate.toLocaleDateString('en-US', { day: '2-digit', month: 'short' });
+                                
+                                const dayItems = filteredPipeline.filter(p => {
+                                  return (isDueToday(p.next_action_date, p.action_status) && i === 0) || 
+                                         (parseFlexibleDate(p.next_action_date)?.toLocaleDateString() === targetDate.toLocaleDateString());
+                                }).sort((a,b) => (PRIORITIES[a.priority as Priority] || 99) - (PRIORITIES[b.priority as Priority] || 99));
+
                                 return (
-                                  <div key={name} className="bg-gray-50 border border-gray-100 px-3 py-2 rounded-xl flex flex-col items-center min-w-[80px]">
-                                    <span className="text-lg font-black text-orbe-green">{percentage}%</span>
-                                    <span className="text-[8px] font-bold text-gray-400 uppercase text-center mt-0.5 leading-tight truncate w-full">{name}</span>
+                                  <div key={safeKey('weekly-col', dayName, i)} className={`flex flex-col bg-white rounded-2xl border ${i === 0 ? 'border-orbe-green shadow-md ring-4 ring-orbe-green/5' : 'border-orbe-tan/30 shadow-sm'} overflow-hidden min-h-[300px]`}>
+                                    <div className={`p-4 border-b ${i === 0 ? 'bg-orbe-green text-white' : 'bg-gray-50 text-orbe-green'}`}>
+                                      <p className="text-[10px] font-black uppercase tracking-widest opacity-70 leading-none">{dayName}</p>
+                                      <p className="text-lg font-black mt-1 leading-none">{dayDate}</p>
+                                    </div>
+                                    <div className="p-2 space-y-2 flex-1 overflow-y-auto max-h-[400px] custom-scrollbar">
+                                      {dayItems.length === 0 ? (
+                                        <div className="h-full flex items-center justify-center p-4">
+                                          <p className="text-[9px] font-bold text-gray-300 uppercase tracking-widest text-center italic">Rest or Prepare</p>
+                                        </div>
+                                      ) : (
+                                        dayItems.map((item, index) => (
+                                          <div key={getPipelineKey(item, 'weekly-day-item', index)} className="p-2 bg-gray-50 border border-gray-100 rounded-xl hover:bg-orbe-cream/30 transition-all group relative">
+                                            <div className={`absolute left-0 top-2 bottom-2 w-1 rounded-full ${item.priority === 'Urgent' ? 'bg-red-500' : item.priority === 'High' ? 'bg-orange-500' : 'bg-blue-400'}`} />
+                                            <p className="text-[10px] font-black text-orbe-green leading-tight truncate pl-2">{item.company_name}</p>
+                                            <p className="text-[9px] text-gray-500 italic mt-1 pl-2 truncate">{item.last_activity}</p>
+                                            <div className="mt-2 flex items-center justify-between pl-2">
+                                              <span className="text-[8px] font-black uppercase text-gray-400">{item.owner_id}</span>
+                                              <button 
+                                                onClick={() => setTaskToAccomplish(item)}
+                                                className="p-1 bg-white border border-orbe-tan/50 rounded-lg text-orbe-green hover:bg-orbe-green hover:text-white transition-all shadow-sm"
+                                              >
+                                                <CheckSquare size={10} />
+                                              </button>
+                                            </div>
+                                          </div>
+                                        ))
+                                      )}
+                                    </div>
                                   </div>
                                 );
                               })}
                             </div>
+
+                            {/* MOBILE TIMELINE */}
+                            <div className="md:hidden space-y-4">
+                              {Array.from({ length: 7 }).map((_, i) => {
+                                const targetDate = new Date(today);
+                                targetDate.setDate(targetDate.getDate() + i);
+                                const dayName = i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : targetDate.toLocaleDateString('en-US', { weekday: 'long' });
+                                const dayDate = targetDate.toLocaleDateString('en-US', { day: '2-digit', month: 'short' });
+                                const dayItems = filteredPipeline.filter(p => (isDueToday(p.next_action_date, p.action_status) && i === 0) || (parseFlexibleDate(p.next_action_date)?.toLocaleDateString() === targetDate.toLocaleDateString()));
+                                if (dayItems.length === 0 && i !== 0) return null;
+                                return (
+                                  <div key={safeKey('weekly-mobile-day', dayName, i)} className="space-y-2">
+                                    <div className={`flex items-center gap-2 px-1 ${i === 0 ? 'text-orbe-green' : 'text-gray-400'}`}>
+                                      <span className="text-[10px] font-black uppercase tracking-widest">{dayName}</span>
+                                      <span className="h-px bg-current opacity-20 flex-1" />
+                                      <span className="text-[10px] font-bold opacity-60 font-mono">{dayDate}</span>
+                                    </div>
+                                    <div className="space-y-3">
+                                      {dayItems.length === 0 ? (
+                                        <div className="p-4 bg-gray-50 rounded-2xl border border-dashed border-gray-200 text-center">
+                                          <p className="text-[10px] text-gray-300 font-bold uppercase tracking-widest italic">No actions scheduled</p>
+                                        </div>
+                                      ) : (
+                                        dayItems.map((item, index) => (
+                                          <div key={getPipelineKey(item, 'weekly-mobile-item', index)} className="bg-white p-4 rounded-2xl border border-orbe-tan/20 shadow-sm space-y-3">
+                                             <div className="flex justify-between items-start text-left">
+                                               <div className="flex-1">
+                                                 <h6 className="font-black text-orbe-green text-[13px] uppercase tracking-tight leading-none">{item.company_name}</h6>
+                                                 <div className="flex items-center gap-2 mt-1.5">
+                                                   <span className="text-[8px] font-black text-gray-400 uppercase tracking-widest">{item.owner_id}</span>
+                                                   <span className="text-[8px] text-gray-300">•</span>
+                                                   <span className="text-[8px] font-bold text-orbe-tan uppercase">{item.status}</span>
+                                                 </div>
+                                               </div>
+                                               <div className={`px-2 py-0.5 rounded text-[8px] font-black uppercase ${item.priority === 'Urgent' ? 'bg-red-100 text-red-600' : item.priority === 'High' ? 'bg-orange-100 text-orange-600' : 'bg-blue-100 text-blue-600'}`}>
+                                                 {item.priority}
+                                               </div>
+                                             </div>
+                                             <p className="text-[11px] text-gray-500 italic leading-snug">"{item.last_activity}"</p>
+                                             <div className="flex gap-2 pt-1 border-t border-gray-50">
+                                               <button onClick={() => setTaskToAccomplish(item)} className="flex-1 py-3 bg-orbe-green text-white rounded-xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 active:scale-95 transition-all shadow-sm">
+                                                 <CheckCircle size={16} /> Close
+                                               </button>
+                                               <button onClick={() => setPostponeItem(item)} className="px-4 py-3 bg-orbe-tan/10 text-orbe-green border border-orbe-tan/20 rounded-xl active:bg-orbe-tan/20 transition-all font-black">
+                                                 <Clock size={16} />
+                                               </button>
+                                             </div>
+                                          </div>
+                                        ))
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                            {rollingDays > 7 && (
+                                <div className="p-4 bg-orbe-green/5 rounded-2xl border border-orbe-tan/20 text-center">
+                                    <p className="text-[10px] font-black text-orbe-green uppercase tracking-widest">
+                                        + {filteredPipeline.filter(p => isWithinNextDays(p.next_action_date, rollingDays, p.action_status) && !isWithinNextDays(p.next_action_date, 6, p.action_status)).length} more actions in the extended {rollingDays}-day window
+                                    </p>
+                                </div>
+                            )}
                           </div>
 
-                          {/* List of actions */}
-                          <div className="space-y-4">
-                            <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-2">
-                              <Clock size={12} /> Detailed History
-                            </h4>
-                            <div className="space-y-3">
-                              {selectedActivityList.items
-                                .sort((a,b) => new Date(b.last_contact_date).getTime() - new Date(a.last_contact_date).getTime())
-                                .map(item => (
-                                <div key={`drawer-item-${item.id}`} className="bg-white border border-orbe-tan/30 p-4 rounded-2xl shadow-sm hover:border-orbe-green/30 transition-all flex flex-col gap-2 relative overflow-hidden group">
-                                  <div className="absolute right-0 top-0 w-1 h-full bg-orbe-tan/20 group-hover:bg-orbe-green transition-colors" />
-                                  <div className="flex justify-between items-start">
-                                    <h5 className="font-black text-orbe-green text-sm uppercase tracking-tight">{item.company_name}</h5>
-                                    <span className="text-[9px] font-mono text-gray-400 font-bold">{formatDateSafe(item.last_contact_date)}</span>
-                                  </div>
-                                  <p className="text-xs text-gray-600 border-l-2 border-orbe-tan/20 pl-3 py-1 italic bg-gray-50/50 rounded-r-lg">"{item.last_activity}"</p>
-                                  <div className="flex items-center gap-2 mt-1">
-                                    <span className={`text-[8px] font-black py-0.5 px-1.5 rounded uppercase tracking-tighter ${item.priority === 'High' ? 'bg-red-50 text-red-500' : 'bg-blue-50 text-blue-500'}`}>
-                                      {item.priority}
-                                    </span>
-                                  </div>
+                          {/* 5. HIGH IMPACT & GAPS */}
+                          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                            {/* High Impact Opportunities */}
+                            <div className="bg-white rounded-3xl border border-orbe-tan/30 shadow-sm overflow-hidden h-fit">
+                              <div className="p-5 border-b border-orbe-tan/20 flex justify-between items-center bg-gray-50/50">
+                                <div>
+                                  <h4 className="text-xs font-black text-orbe-green uppercase tracking-widest">High Impact Opportunities</h4>
+                                  <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Key revenue drivers or advanced stages</p>
                                 </div>
-                              ))}
-                              {selectedActivityList.items.length === 0 && (
-                                <div className="py-20 text-center text-gray-400 font-black uppercase text-[10px] tracking-widest italic">
-                                  No records found
+                                <Star size={18} className="text-orange-500" />
+                              </div>
+                              <div className="divide-y divide-orbe-tan/10 max-h-[400px] overflow-y-auto">
+                                {(() => {
+                                  const highImpact = filteredPipeline.filter(p => {
+                                    const isHighPrio = p.priority === 'Urgent' || p.priority === 'High';
+                                    const advancedStage = ['Baking off', 'Grajales', 'Negotiating'].includes(p.status);
+                                    return isHighPrio || advancedStage;
+                                  }).slice(0, 10);
+
+                                  return highImpact.length === 0 ? (
+                                    <div className="p-10 text-center text-gray-400 text-[10px] font-bold uppercase tracking-widest italic">No high impact leads detected</div>
+                                  ) : (
+                                    highImpact.map((item, index) => (
+                                      <div 
+                                        key={getPipelineKey(item, 'impact-item', index)} 
+                                        className="p-4 flex items-center justify-between hover:bg-orbe-cream/20 transition-all group cursor-pointer active:bg-gray-100"
+                                        onClick={() => setTaskToAccomplish(item)}
+                                      >
+                                        <div className="flex items-center gap-3">
+                                          <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-black text-[10px] ${item.priority === 'Urgent' ? 'bg-red-50 text-red-500' : 'bg-orange-50 text-orange-500'}`}>
+                                            {item.priority === 'Urgent' ? 'U' : 'H'}
+                                          </div>
+                                          <div>
+                                            <p className="font-bold text-orbe-green text-sm leading-tight">{item.company_name}</p>
+                                            <div className="flex items-center gap-2 mt-1">
+                                               <span className="text-[9px] font-black text-gray-400 uppercase tracking-widest leading-none">{item.status}</span>
+                                               <span className="text-[8px] text-gray-300">•</span>
+                                               <span className="text-[9px] text-orbe-tan font-bold leading-none">{formatDateSafe(item.next_action_date)}</span>
+                                            </div>
+                                          </div>
+                                        </div>
+                                        <div className="p-2 bg-gray-50 text-orbe-green rounded-xl border border-orbe-tan/20 group-hover:bg-orbe-green group-hover:text-white transition-all shadow-sm">
+                                          <ChevronRight size={16} />
+                                        </div>
+                                      </div>
+                                    )
+                                  ));
+                                })()}
+                              </div>
+                            </div>
+
+                            {/* Pipeline Gaps */}
+                            <div className="bg-white rounded-3xl border border-orbe-tan/30 shadow-sm overflow-hidden h-fit">
+                              <div className="p-5 border-b border-orbe-tan/20 flex justify-between items-center bg-gray-50/50">
+                                <div>
+                                  <h4 className="text-xs font-black text-orbe-green uppercase tracking-widest">Pipeline Gaps</h4>
+                                  <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Active leads missing next action date</p>
                                 </div>
-                              )}
+                                <AlertCircle size={18} className="text-purple-500" />
+                              </div>
+                              <div className="divide-y divide-orbe-tan/10 max-h-[400px] overflow-y-auto font-sans">
+                                {(() => {
+                                  const gaps = filteredPipeline.filter(p => !p.next_action_date).slice(0, 10);
+                                  return gaps.length === 0 ? (
+                                    <div className="p-10 text-center text-gray-400 text-[10px] font-bold uppercase tracking-widest italic">All active leads have a next action. Excellent!</div>
+                                  ) : (
+                                    gaps.map((item, index) => (
+                                      <div 
+                                        key={getPipelineKey(item, 'gap-item', index)} 
+                                        className="p-4 flex items-center justify-between hover:bg-orbe-cream/20 transition-all group cursor-pointer active:bg-gray-100"
+                                        onClick={() => setTaskToAccomplish(item)}
+                                      >
+                                        <div>
+                                          <p className="font-bold text-orbe-green text-sm leading-tight">{item.company_name}</p>
+                                          <p className="text-[9px] text-red-400 font-black uppercase tracking-widest mt-1 leading-none">Missing follow-up date</p>
+                                        </div>
+                                        <div className="px-4 py-2 bg-purple-50 text-purple-600 rounded-xl border border-purple-100 group-hover:bg-purple-600 group-hover:text-white transition-all text-[10px] font-black uppercase tracking-widest shadow-sm">
+                                          Fix Momentum
+                                        </div>
+                                      </div>
+                                    )
+                                  ));
+                                })()}
+                              </div>
                             </div>
                           </div>
-                        </div>
-
-                        <div className="p-6 bg-gray-50 border-t border-orbe-tan/20">
-                          <button 
-                            onClick={() => setSelectedActivityList(null)}
-                            className="w-full py-4 bg-orbe-green text-white font-black uppercase tracking-widest rounded-2xl shadow-lg shadow-orbe-green/20 active:scale-[0.98] transition-all"
-                          >
-                            Close Analysis
-                          </button>
-                        </div>
-                      </motion.div>
-                    </div>
-                  )}
-                </AnimatePresence>
+                        </>
+                      );
+                    })()}
+                  </div>
+                </motion.div>
+              )}
 
                 {view === 'database' && (
               <motion.div 
@@ -3233,11 +3665,11 @@ export default function App() {
                         { value: 'Potential client', label: 'POTENTIAL' },
                         { value: 'Client', label: 'CLIENT' },
                         { value: 'Not interested', label: 'DISCARDED' }
-                      ].map(s => {
+                      ].map((s, index) => {
                         const isActive = statusFilter === s.value;
                         return (
                           <button
-                            key={s.value}
+                            key={safeKey('client-status-filter', s.value, index)}
                             onClick={() => setStatusFilter(s.value as any)}
                             className={`px-3 py-2 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all whitespace-nowrap ${
                               isActive 
@@ -3296,7 +3728,7 @@ export default function App() {
                         filteredClients.map((c, idx) => {
                           const pipelineItem = pipeline.find(p => String(p.client_id) === String(c.client_id || c.id));
                           return (
-                            <tr key={`db-row-${c.client_id || c.id || idx}`} className="hover:bg-orbe-cream/30 transition-colors group">
+                            <tr key={getClientKey(c, 'db-row', idx)} className="hover:bg-orbe-cream/30 transition-colors group">
                               <td className="p-5 font-mono text-xs text-gray-400">#{c.client_id || c.id || idx}</td>
                               <td className="p-5 font-bold text-orbe-green">
                                 <div className="flex flex-col">
@@ -3428,7 +3860,7 @@ export default function App() {
                       filteredClients.map((c, idx) => {
                         const pipelineItem = pipeline.find(p => String(p.client_id) === String(c.client_id || c.id));
                         return (
-                          <div key={`db-mob-${c.client_id || c.id || idx}`} className="bg-white rounded-2xl border border-orbe-tan/40 shadow-sm overflow-hidden flex flex-col active:bg-orbe-cream/10 transition-all">
+                          <div key={getClientKey(c, 'db-mob', idx)} className="bg-white rounded-2xl border border-orbe-tan/40 shadow-sm overflow-hidden flex flex-col active:bg-orbe-cream/10 transition-all">
                             <div className="p-4">
                               <div className="flex justify-between items-start">
                                 <div className="flex-1 min-w-0 pr-2">
@@ -3506,134 +3938,482 @@ export default function App() {
                    <span>Total Records: {filteredClients.length}</span>
                    <span className="italic">Restricted Access - Read Only Information</span>
                 </div>
-              </motion.div>
+               </motion.div>
+             )}
+          </AnimatePresence>
+
+          {/* OVERVIEW DETAIL DRAWER */}
+          <AnimatePresence>
+            {selectedDetail && (
+              <div className="fixed inset-0 z-50 flex justify-end">
+                <motion.div 
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  onClick={() => setSelectedDetail(null)}
+                  className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+                />
+                <motion.div 
+                  initial={{ x: '100%' }}
+                  animate={{ x: 0 }}
+                  exit={{ x: '100%' }}
+                  transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+                  className="relative w-full md:max-w-2xl bg-[#F5F5ED] shadow-2xl flex flex-col h-full border-l border-orbe-tan/30"
+                >
+                  <div className="p-6 border-b border-orbe-tan/30 flex justify-between items-center bg-white sticky top-0 z-30">
+                    <div>
+                      <h4 className="text-sm font-black text-orbe-green uppercase tracking-widest">{selectedDetail.label}</h4>
+                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Listing affected potential clients • {selectedDetail.items.length} records</p>
+                    </div>
+                    <button 
+                      onClick={() => setSelectedDetail(null)}
+                      className="w-10 h-10 rounded-full bg-gray-50 flex items-center justify-center text-gray-400 hover:bg-red-50 hover:text-red-500 transition-all shadow-sm"
+                    >
+                      <XCircle size={20} />
+                    </button>
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4 pb-32">
+                    {selectedDetail.items.length > 0 ? (
+                      selectedDetail.items.map((item, idx) => {
+                        // Normalize item: it might be the unified view item or a raw client/record
+                        const client = item.client || (item.client_id ? item : null);
+                        const mainP = item.principal || (item.id ? item : null);
+                        
+                        // Safety fallback for companies found via search or other sources
+                        const companyName = client?.company_name || mainP?.company_name || 'Unknown Company';
+                        
+                        return (
+                          <div 
+                            key={safeKey('detail-row', companyName, idx)}
+                            className="bg-white rounded-2xl border border-orbe-tan/20 shadow-sm overflow-hidden flex flex-col hover:border-orbe-green/30 transition-all"
+                          >
+                            <div className="p-4 border-b border-orbe-tan/10 bg-gray-50/30 flex justify-between items-center">
+                              <h5 className="font-black text-orbe-green uppercase text-xs truncate max-w-[70%]">{companyName}</h5>
+                              <span className="px-2 py-0.5 bg-orbe-green/5 text-orbe-green text-[8px] font-black rounded-lg uppercase border border-orbe-tan/10">
+                                {client?.client_type || item.client_type || 'Potential'}
+                              </span>
+                            </div>
+                            <div className="p-4 grid grid-cols-2 lg:grid-cols-3 gap-4">
+                              <div className="space-y-1">
+                                <label className="text-[7px] font-black text-gray-400 uppercase tracking-widest">Ownership & Pipeline</label>
+                                <div className="flex items-center gap-2">
+                                  <UserCircle size={10} className="text-orbe-green/40" />
+                                  <span className="text-[9px] font-black text-orbe-green uppercase">{item.owner_id || mainP?.owner_id || 'Unassigned'}</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <Layers size={10} className="text-orbe-green/40" />
+                                  <span className="text-[9px] font-bold text-gray-600 uppercase">{item.effectiveStage || mainP?.client_status || mainP?.status || 'No status'}</span>
+                                </div>
+                              </div>
+
+                              <div className="space-y-1">
+                                <label className="text-[7px] font-black text-gray-400 uppercase tracking-widest">Scheduling</label>
+                                <div className="flex items-center gap-2">
+                                  <Calendar size={10} className="text-orbe-green/40" />
+                                  <span className={`text-[9px] font-black uppercase ${isOverdue(mainP?.next_action_date, mainP?.action_status) ? 'text-red-500' : 'text-gray-600'}`}>
+                                    Next: {formatDateSafe(mainP?.next_action_date)}
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <History size={10} className="text-orbe-green/40" />
+                                  <span className="text-[9px] font-black text-gray-400 uppercase">Last: {formatDateSafe(mainP?.last_contact_date)}</span>
+                                </div>
+                              </div>
+
+                              <div className="space-y-1 col-span-2 lg:col-span-1">
+                                <label className="text-[7px] font-black text-gray-400 uppercase tracking-widest">Issues/Notes</label>
+                                {(!mainP && !item.principal) && <div className="text-[9px] font-bold text-red-400 uppercase italic">No pipeline record</div>}
+                                {item.hasNoNextAction && <div className="text-[9px] font-bold text-amber-500 uppercase italic">No next action scheduled</div>}
+                                <p className="text-[9px] text-gray-400 italic line-clamp-2">{mainP?.notes || client?.notes || item.notes || 'No notes'}</p>
+                              </div>
+                            </div>
+                            <div className="p-3 bg-gray-50/50 border-t border-orbe-tan/10 flex justify-end gap-3">
+                               <button 
+                                 onClick={() => { setView('database'); setSearchTerm(companyName); setSelectedDetail(null); }}
+                                 className="text-[8px] font-black text-orbe-green uppercase tracking-widest hover:underline"
+                               >
+                                 Open client
+                               </button>
+                               <button 
+                                 onClick={() => { setView('pipeline'); setSearchTerm(companyName); setSelectedDetail(null); }}
+                                 className="text-[8px] font-black text-orbe-green uppercase tracking-widest hover:underline"
+                               >
+                                 Open in pipeline
+                               </button>
+                            </div>
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <div className="h-full flex flex-col items-center justify-center text-center p-12 space-y-4">
+                        <div className="w-16 h-16 bg-orbe-tan/10 rounded-full flex items-center justify-center text-orbe-tan/40">
+                          <Database size={32} />
+                        </div>
+                        <div>
+                          <p className="text-sm font-black text-orbe-green uppercase">No records found</p>
+                          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">No items match the selected segment or highlight</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </motion.div>
+              </div>
             )}
           </AnimatePresence>
 
-        {/* MODAL EDITAR CLIENTE */}
-        <AnimatePresence>
-          {editingClient && (
-            <div key="edit-modal-overlay" className="fixed inset-0 bg-black/60 backdrop-blur-md z-[110] flex items-center justify-center p-6">
-              <motion.div 
-                key="edit-modal-content"
-                initial={{ scale: 0.9, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                exit={{ scale: 0.9, opacity: 0 }}
-                className="bg-white rounded-3xl w-full max-w-2xl shadow-2xl overflow-hidden"
-              >
-                <div className="bg-orbe-green p-8 text-white flex justify-between items-center">
-                  <div>
-                    <h3 className="text-2xl font-bold flex items-center gap-3">
-                      <Settings className="w-6 h-6" /> Edit Information
-                    </h3>
-                    <p className="text-white/60 text-sm mt-1">{editingClient.company_name}</p>
-                  </div>
-                  <button onClick={() => setEditingClient(null)} className="p-2 hover:bg-white/10 rounded-full transition-colors text-white">
-                    <XCircle className="w-8 h-8" />
-                  </button>
-                </div>
-                
-                <form 
-                    onSubmit={async (e) => {
-                      e.preventDefault();
-                      console.log("Edit Form Submission Triggered");
-                      if (isSaving) return;
-
-                      setIsSaving(true);
-                      try {
-                        const formData = new FormData(e.currentTarget);
-                        const updates: any = {
-                          company_name: (formData.get('company_name') as string || '').trim(),
-                          contact_name: (formData.get('contact_name') as string || '').trim(),
-                          lead_name: (formData.get('lead_name') as string || '').trim(),
-                          email: (formData.get('email') as string || '').trim(),
-                          phone: (formData.get('phone') as string || '').trim(),
-                          mobile: (formData.get('mobile') as string || '').trim(),
-                          address: (formData.get('address') as string || '').trim(),
-                          client_type: formData.get('client_type') as string,
-                        };
-
-                        console.log("Attempting to update client with ID:", editingClient.client_id, "Payload:", updates);
-                        await handleUpdateClient(editingClient.client_id, updates);
-                        
-                        alert("Client updated successfully!");
-                        setEditingClient(null);
-                        await fetchClients();
-                      } catch (err: any) {
-                        console.error("Submission error:", err);
-                        alert(`Error: ${err.message || 'Unknown'}`);
-                      } finally {
-                        setIsSaving(false);
-                      }
-                    }}
-                  className="p-8 space-y-6 max-h-[70vh] overflow-y-auto"
+          {/* ACTIVITY DETAIL DRAWER */}
+          <AnimatePresence>
+            {selectedPostponedList && (
+              <div key="postponed-drawer-container" className="fixed inset-0 z-[60] flex justify-end">
+                <motion.div 
+                  key="postponed-drawer-overlay"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  onClick={() => setSelectedPostponedList(null)}
+                  className="absolute inset-0 bg-black/40 backdrop-blur-sm shadow-2xl"
+                />
+                <motion.div 
+                  key="postponed-drawer-content"
+                  initial={{ x: '100%' }}
+                  animate={{ x: 0 }}
+                  exit={{ x: '100%' }}
+                  transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+                  className="relative w-full md:max-w-4xl bg-white h-full shadow-2xl flex flex-col border-l border-orbe-tan/30 overflow-hidden"
                 >
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="col-span-2">
-                      <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Company Name</label>
-                      <input name="company_name" defaultValue={editingClient.company_name} className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-lg focus:ring-2 ring-orbe-green/10 outline-none transition-all font-semibold text-orbe-green" />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Lead Name</label>
-                      <input name="lead_name" defaultValue={editingClient.lead_name} className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-lg focus:ring-2 ring-orbe-green/10 outline-none transition-all" />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Contact Person</label>
-                      <input name="contact_name" defaultValue={editingClient.contact_name} className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-lg focus:ring-2 ring-orbe-green/10 outline-none transition-all" />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Corporate Email</label>
-                      <input name="email" type="email" defaultValue={editingClient.email} className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-lg focus:ring-2 ring-orbe-green/10 outline-none transition-all" />
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Phone</label>
-                        <input name="phone" defaultValue={editingClient.phone} className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-lg focus:ring-2 ring-orbe-green/10 outline-none transition-all" />
+                  <div className="p-6 border-b border-orbe-tan/20 flex items-center justify-between bg-orange-600 text-white">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-white/10 rounded-xl">
+                        <Clock size={20} />
                       </div>
                       <div>
-                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Mobile</label>
-                        <input name="mobile" defaultValue={editingClient.mobile} className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-lg focus:ring-2 ring-orbe-green/10 outline-none transition-all" />
+                        <h3 className="font-black text-lg uppercase tracking-tight">Postponed Balance - {selectedPostponedList.owner}</h3>
+                        <p className="text-[10px] font-bold text-white/60 uppercase tracking-widest">Delayed follow-ups analysis</p>
                       </div>
                     </div>
-                    <div className="col-span-2">
-                      <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Office Address</label>
-                      <textarea name="address" rows={2} defaultValue={editingClient.address_line_1 || (editingClient as any).address} className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-lg focus:ring-2 ring-orbe-green/10 outline-none transition-all mb-1" />
-                    </div>
-                    <div className="col-span-2">
-                      <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Client Notes</label>
-                      <textarea name="notes" rows={4} defaultValue={editingClient.notes} className="w-full p-3 bg-blue-50/20 border border-blue-100/50 rounded-lg focus:ring-2 ring-blue-500/10 outline-none transition-all mb-4" />
-                    </div>
-                    <div className="col-span-2">
-                      <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Client Type</label>
-                      <select 
-                        name="client_type" 
-                        defaultValue={editingClient.client_type || 'Potential client'} 
-                        className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-lg focus:ring-2 ring-orbe-green/10 outline-none transition-all font-bold text-orbe-green uppercase"
-                      >
-                        <option value="Potential client">Potential client</option>
-                        <option value="Client">Client</option>
-                        <option value="Temporary Discarded">Temporary Discarded</option>
-                      </select>
-                    </div>
-                  </div>
-                  <div className="flex flex-col md:flex-row gap-3">
-                    <button type="button" onClick={() => setEditingClient(null)} className="flex-1 bg-gray-100 text-gray-500 py-4 rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-gray-200 transition-all">
-                      CANCEL
-                    </button>
                     <button 
-                      type="submit" 
-                      disabled={isSaving}
-                      className="flex-[2] bg-orbe-green text-white py-4 rounded-xl font-bold text-xs uppercase tracking-widest hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg flex items-center justify-center gap-2"
+                      onClick={() => setSelectedPostponedList(null)}
+                      className="p-2 hover:bg-white/10 rounded-full transition-colors"
                     >
-                      {isSaving ? <Loader2 className="animate-spin" size={16} /> : <Save size={16} />}
-                      {isSaving ? 'SAVING...' : 'SAVE CHANGES'}
+                      <XCircle size={24} />
                     </button>
                   </div>
-                </form>
-              </motion.div>
-            </div>
-          )}
-        </AnimatePresence>
+
+                  <div className="flex-1 overflow-auto p-0 scrollbar-thin scrollbar-thumb-orbe-tan/20 pb-32">
+                    {selectedPostponedList.items.length === 0 ? (
+                      <div className="p-20 text-center text-gray-400 italic">
+                        No postponed actions found for this seller.
+                      </div>
+                    ) : (
+                      <>
+                        {/* DESKTOP TABLE */}
+                        <table className="w-full text-left border-collapse hidden md:table">
+                          <thead className="bg-gray-50 border-b border-orbe-tan/20 sticky top-0 z-10">
+                            <tr>
+                              <th className="p-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">Company</th>
+                              <th className="p-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">Postponed Action</th>
+                              <th className="p-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">From Date (Last)</th>
+                              <th className="p-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">To Date (Next)</th>
+                              <th className="p-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">Notes</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-orbe-tan/10">
+                            {selectedPostponedList.items.map((item, index) => {
+                              const fromDate = item.last_contact_date || (item as any).previous_next_action_date || (item as any).old_next_action_date || (item as any).original_action_date || (item as any).previous_action_date;
+                              
+                              return (
+                                <tr key={getPipelineKey(item, 'postponed-detail', index)} className="hover:bg-orange-50/30 transition-colors">
+                                  <td className="p-4">
+                                    <span className="text-[11px] font-black text-orbe-green uppercase tracking-tight">
+                                      {item.company_name || (item as any).company || 'Unknown company'}
+                                    </span>
+                                  </td>
+                                  <td className="p-4">
+                                    <span className="text-[10px] text-gray-600 italic">
+                                      {item.last_activity || item.last_action || 'Postponed action'}
+                                    </span>
+                                  </td>
+                                  <td className="p-4">
+                                    <span className="text-[9px] font-bold text-gray-400 uppercase">
+                                      {fromDate ? formatDateSafe(fromDate) : 'Not available'}
+                                    </span>
+                                  </td>
+                                  <td className="p-4">
+                                    <span className="text-[9px] font-bold text-orange-600 uppercase">
+                                      {item.next_action_date ? formatDateSafe(item.next_action_date) : (item as any).action_date ? formatDateSafe((item as any).action_date) : 'Not available'}
+                                    </span>
+                                  </td>
+                                  <td className="p-4">
+                                    <p className="text-[10px] text-gray-500 max-w-[200px] truncate" title={item.notes || (item as any).notas}>
+                                      {item.notes || (item as any).notas || 'No notes'}
+                                    </p>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+
+                        {/* MOBILE CARDS */}
+                        <div className="md:hidden divide-y divide-orbe-tan/10">
+                          {selectedPostponedList.items.map((item, index) => {
+                            const fromDate = item.last_contact_date || (item as any).previous_next_action_date || (item as any).old_next_action_date || (item as any).original_action_date || (item as any).previous_action_date;
+                            
+                            return (
+                              <div key={getPipelineKey(item, 'postponed-mobile-detail', index)} className="p-4 space-y-3">
+                                <div>
+                                  <h6 className="font-black text-orbe-green text-sm uppercase tracking-tight">{item.company_name || 'Unknown company'}</h6>
+                                  <p className="text-[10px] text-gray-500 italic mt-1 leading-snug">"{item.last_activity || 'Postponed action'}"</p>
+                                </div>
+                                <div className="grid grid-cols-2 gap-3">
+                                  <div className="bg-gray-50 p-2 rounded-lg border border-orbe-tan/10">
+                                    <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest">From (Last)</p>
+                                    <p className="text-[10px] font-bold text-gray-600">{fromDate ? formatDateSafe(fromDate) : 'N/A'}</p>
+                                  </div>
+                                  <div className="bg-orange-50 p-2 rounded-lg border border-orange-100">
+                                    <p className="text-[8px] font-black text-orange-400 uppercase tracking-widest">To (Next)</p>
+                                    <p className="text-[10px] font-bold text-orange-600">{item.next_action_date ? formatDateSafe(item.next_action_date) : 'N/A'}</p>
+                                  </div>
+                                </div>
+                                {item.notes && (
+                                  <div className="p-3 bg-gray-50/50 rounded-xl border border-orbe-tan/5">
+                                    <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mb-1">Notes</p>
+                                    <p className="text-[10px] text-gray-600">{item.notes}</p>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </>
+                    )}
+                  </div>
+
+                  <div className="p-6 bg-gray-50 border-t border-orbe-tan/20">
+                    <button 
+                      onClick={() => setSelectedPostponedList(null)}
+                      className="w-full py-4 bg-orange-600 text-white font-black uppercase tracking-widest rounded-2xl shadow-lg shadow-orange-600/20 active:scale-[0.98] transition-all"
+                    >
+                      Close Details
+                    </button>
+                  </div>
+                </motion.div>
+              </div>
+            )}
+          </AnimatePresence>
+
+          {/* ACTIVITY DETAIL DRAWER */}
+          <AnimatePresence>
+            {selectedActivityList && (
+              <div key="selected-activity-drawer-container" className="fixed inset-0 z-[60] flex justify-end">
+                <motion.div 
+                  key="selected-activity-drawer-overlay"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  onClick={() => setSelectedActivityList(null)}
+                  className="absolute inset-0 bg-black/40 backdrop-blur-sm shadow-2xl"
+                />
+                <motion.div 
+                  key="selected-activity-drawer-content"
+                  initial={{ x: '100%' }}
+                  animate={{ x: 0 }}
+                  exit={{ x: '100%' }}
+                  transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+                  className="relative w-full max-w-md bg-white h-full shadow-2xl flex flex-col border-l border-orbe-tan/30 overflow-hidden"
+                >
+                  {/* Header Drawer */}
+                  <div className="p-6 border-b border-orbe-tan/20 flex items-center justify-between bg-orbe-green text-white">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-white/10 rounded-xl">
+                        <History size={20} />
+                      </div>
+                      <div>
+                        <h3 className="font-black text-lg uppercase tracking-tight">{selectedActivityList.owner} - Activities</h3>
+                        <p className="text-[10px] font-bold text-white/60 uppercase tracking-widest">Last {selectedActivityList.days} days summary</p>
+                      </div>
+                    </div>
+                    <button 
+                      onClick={() => setSelectedActivityList(null)}
+                      className="p-2 hover:bg-white/10 rounded-full transition-colors"
+                    >
+                      <XCircle size={24} />
+                    </button>
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto p-6 space-y-8 scrollbar-thin scrollbar-thumb-orbe-tan/20 pb-32">
+                    <div className="space-y-4">
+                      <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-2">
+                        <Target size={12} /> Action Type Distribution
+                      </h4>
+                      <div className="flex flex-wrap gap-2">
+                        {Object.entries(
+                          selectedActivityList.items.reduce((acc: any, item) => {
+                            const name = item.last_activity || 'Others';
+                            acc[name] = (acc[name] || 0) + 1;
+                            return acc;
+                          }, {})
+                        ).map(([name, count]: [string, any], index) => {
+                          const percentage = Math.round((count / selectedActivityList.items.length) * 100);
+                          return (
+                            <div key={safeKey('drawer-stat', name, index)} className="bg-gray-50 border border-gray-100 px-3 py-2 rounded-xl flex flex-col items-center min-w-[80px]">
+                              <span className="text-lg font-black text-orbe-green">{percentage}%</span>
+                              <span className="text-[8px] font-bold text-gray-400 uppercase text-center mt-0.5 leading-tight truncate w-full">{name}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="space-y-4">
+                      <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-2">
+                        <Clock size={12} /> Detailed History
+                      </h4>
+                      <div className="space-y-3">
+                        {selectedActivityList.items
+                          .sort((a,b) => new Date(b.last_contact_date).getTime() - new Date(a.last_contact_date).getTime())
+                          .map((item, index) => (
+                          <div key={getPipelineKey(item, 'drawer-item', index)} className="bg-white border border-orbe-tan/30 p-4 rounded-2xl shadow-sm hover:border-orbe-green/30 transition-all flex flex-col gap-2 relative overflow-hidden group">
+                            <div className="absolute right-0 top-0 w-1 h-full bg-orbe-tan/20 group-hover:bg-orbe-green transition-colors" />
+                            <div className="flex justify-between items-start">
+                              <h5 className="font-black text-orbe-green text-sm uppercase tracking-tight">{item.company_name}</h5>
+                              <span className="text-[9px] font-mono text-gray-400 font-bold">{formatDateSafe(item.last_contact_date)}</span>
+                            </div>
+                            <p className="text-xs text-gray-600 border-l-2 border-orbe-tan/20 pl-3 py-1 italic bg-gray-50/50 rounded-r-lg">"{item.last_activity}"</p>
+                            <div className="flex items-center gap-2 mt-1">
+                              <span className={`text-[8px] font-black py-0.5 px-1.5 rounded uppercase tracking-tighter ${item.priority === 'High' ? 'bg-red-50 text-red-500' : 'bg-blue-50 text-blue-500'}`}>
+                                {item.priority}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="p-6 bg-gray-50 border-t border-orbe-tan/20">
+                    <button 
+                      onClick={() => setSelectedActivityList(null)}
+                      className="w-full py-4 bg-orbe-green text-white font-black uppercase tracking-widest rounded-2xl shadow-lg shadow-orbe-green/20 active:scale-[0.98] transition-all"
+                    >
+                      Close Analysis
+                    </button>
+                  </div>
+                </motion.div>
+              </div>
+            )}
+          </AnimatePresence>
+
+          {/* MODAL EDITAR CLIENTE */}
+          <AnimatePresence>
+            {editingClient && (
+              <div key="edit-client-modal-overlay" className="fixed inset-0 bg-black/60 backdrop-blur-md z-[110] flex items-center justify-center p-6">
+                <motion.div 
+                  key="edit-client-modal-content"
+                  initial={{ scale: 0.9, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ scale: 0.9, opacity: 0 }}
+                  className="bg-white rounded-t-3xl md:rounded-3xl w-full max-w-2xl shadow-2xl overflow-hidden h-[90vh] md:h-auto flex flex-col mt-auto md:mt-0"
+                >
+                  <div className="bg-orbe-green p-6 md:p-8 text-white flex justify-between items-center">
+                    <div>
+                      <h3 className="text-2xl font-bold flex items-center gap-3">
+                        <Settings className="w-6 h-6" /> Edit Information
+                      </h3>
+                      <p className="text-white/60 text-sm mt-1">{editingClient.company_name}</p>
+                    </div>
+                    <button onClick={() => setEditingClient(null)} className="p-2 hover:bg-white/10 rounded-full transition-colors text-white">
+                      <XCircle className="w-8 h-8" />
+                    </button>
+                  </div>
+                  
+                  <form 
+                      onSubmit={async (e) => {
+                        e.preventDefault();
+                        if (isSaving) return;
+                        setIsSaving(true);
+                        try {
+                          const formData = new FormData(e.currentTarget);
+                          const updates: any = {
+                            company_name: (formData.get('company_name') as string || '').trim(),
+                            contact_name: (formData.get('contact_name') as string || '').trim(),
+                            lead_name: (formData.get('lead_name') as string || '').trim(),
+                            email: (formData.get('email') as string || '').trim(),
+                            phone: (formData.get('phone') as string || '').trim(),
+                            mobile: (formData.get('mobile') as string || '').trim(),
+                            address: (formData.get('address') as string || '').trim(),
+                            client_type: formData.get('client_type') as string,
+                            notes: (formData.get('notes') as string || '').trim(),
+                          };
+                          await handleUpdateClient(editingClient.client_id, updates);
+                          setEditingClient(null);
+                          await fetchClients();
+                        } catch (err: any) {
+                          alert(`Error: ${err.message || 'Unknown'}`);
+                        } finally {
+                          setIsSaving(false);
+                        }
+                      }}
+                    className="p-6 md:p-8 space-y-6 overflow-y-auto flex-1 pb-32"
+                  >
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="col-span-2">
+                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Company Name</label>
+                        <input name="company_name" defaultValue={editingClient.company_name} className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-lg focus:ring-2 ring-orbe-green/10 outline-none transition-all font-semibold text-orbe-green" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Lead Name</label>
+                        <input name="lead_name" defaultValue={editingClient.lead_name} className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-lg focus:ring-2 ring-orbe-green/10 outline-none transition-all" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Contact Person</label>
+                        <input name="contact_name" defaultValue={editingClient.contact_name} className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-lg focus:ring-2 ring-orbe-green/10 outline-none transition-all" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Corporate Email</label>
+                        <input name="email" type="email" defaultValue={editingClient.email} className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-lg focus:ring-2 ring-orbe-green/10 outline-none transition-all" />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Phone</label>
+                          <input name="phone" defaultValue={editingClient.phone} className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-lg focus:ring-2 ring-orbe-green/10 outline-none transition-all" />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Mobile</label>
+                          <input name="mobile" defaultValue={editingClient.mobile} className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-lg focus:ring-2 ring-orbe-green/10 outline-none transition-all" />
+                        </div>
+                      </div>
+                      <div className="col-span-2">
+                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Office Address</label>
+                        <textarea name="address" rows={2} defaultValue={editingClient.address_line_1 || (editingClient as any).address} className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-lg focus:ring-2 ring-orbe-green/10 outline-none transition-all mb-1" />
+                      </div>
+                      <div className="col-span-2">
+                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Client Notes</label>
+                        <textarea name="notes" rows={4} defaultValue={editingClient.notes} className="w-full p-3 bg-blue-50/20 border border-blue-100/50 rounded-lg focus:ring-2 ring-blue-500/10 outline-none transition-all mb-4" />
+                      </div>
+                      <div className="col-span-2">
+                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Client Type</label>
+                        <select name="client_type" defaultValue={editingClient.client_type || 'Potential client'} className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-lg focus:ring-2 ring-orbe-green/10 outline-none transition-all font-bold text-orbe-green uppercase">
+                          <option value="Potential client">Potential client</option>
+                          <option value="Client">Client</option>
+                          <option value="Temporary Discarded">Temporary Discarded</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className="flex flex-col md:flex-row gap-3">
+                      <button type="button" onClick={() => setEditingClient(null)} className="flex-1 bg-gray-100 text-gray-500 py-4 rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-gray-200 transition-all">
+                        CANCEL
+                      </button>
+                      <button type="submit" disabled={isSaving} className="flex-[2] bg-orbe-green text-white py-4 rounded-xl font-bold text-xs uppercase tracking-widest hover:opacity-90 disabled:opacity-50 transition-all flex items-center justify-center gap-2">
+                        {isSaving ? <Loader2 className="animate-spin" size={16} /> : <Save size={16} />} SAVE CHANGES
+                      </button>
+                    </div>
+                  </form>
+                </motion.div>
+              </div>
+            )}
+          </AnimatePresence>
 
         {/* MODAL TASK ACCOMPLISHED */}
         <AnimatePresence>
@@ -3650,7 +4430,7 @@ export default function App() {
                 initial={{ scale: 0.9, y: 20 }}
                 animate={{ scale: 1, y: 0 }}
                 exit={{ scale: 0.9, y: 20 }}
-                className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden border border-orbe-tan/30"
+                className="bg-white w-full max-w-md rounded-t-3xl md:rounded-3xl shadow-2xl overflow-hidden border border-orbe-tan/30 h-[90vh] md:h-auto flex flex-col mt-auto md:mt-0"
               >
                 <div className="bg-orbe-green p-6 text-white text-center relative">
                     <CheckCircle className="w-10 h-10 mx-auto mb-2 opacity-50" />
@@ -3658,7 +4438,7 @@ export default function App() {
                     <p className="text-white/60 text-[10px] uppercase tracking-[0.2em] font-black">{taskToAccomplish.company_name}</p>
                     <div className="flex items-center justify-center gap-2 mt-2 py-1 px-3 bg-white/10 rounded-full w-fit mx-auto border border-white/5">
                       <UserCircle size={12} className="text-white/40" />
-                      <span className="text-[9px] font-bold text-white/70 uppercase">Responsable: {taskToAccomplish.owner || 'Unassigned'}</span>
+                      <span className="text-[9px] font-bold text-white/70 uppercase">Responsable: {taskToAccomplish.owner_id || (taskToAccomplish as any).owner || (taskToAccomplish as any).assigned_to || 'Unassigned'}</span>
                     </div>
                     <button 
                       onClick={() => setTaskToAccomplish(null)}
@@ -3693,7 +4473,7 @@ export default function App() {
                           formData.get('new_status') as PipelineStatus
                         );
                       }}
-                      className="p-6 md:p-8 space-y-6"
+                      className="p-6 md:p-8 space-y-6 overflow-y-auto flex-1 pb-32"
                     >
                       {modalError && (
                         <div className="bg-red-50 border border-red-200 text-red-600 p-3 rounded-xl text-[10px] font-bold uppercase tracking-widest animate-shake">
@@ -3810,7 +4590,7 @@ export default function App() {
                 initial={{ scale: 0.9, y: 20 }}
                 animate={{ scale: 1, y: 0 }}
                 exit={{ scale: 0.9, y: 20 }}
-                className="bg-white w-full max-w-sm rounded-3xl shadow-2xl overflow-hidden border border-orbe-tan/30"
+                className="bg-white w-full max-w-sm rounded-t-3xl md:rounded-3xl shadow-2xl overflow-hidden border border-orbe-tan/30 h-[80vh] md:h-auto flex flex-col mt-auto md:mt-0"
               >
                 <div className="bg-orbe-green p-6 text-white text-center">
                   <Calendar className="w-10 h-10 mx-auto mb-2 opacity-50" />
@@ -3828,7 +4608,7 @@ export default function App() {
                     }
                     handlePostponeTask(postponeItem, postponeDate, postponeReason);
                   }}
-                  className="p-8 space-y-6"
+                  className="p-8 space-y-6 overflow-y-auto flex-1 pb-32"
                 >
                   {modalError && (
                     <div className="bg-red-50 border border-red-200 text-red-600 p-3 rounded-xl text-[10px] font-bold uppercase tracking-widest text-center animate-shake">
@@ -3947,6 +4727,7 @@ export default function App() {
               </motion.div>
             </motion.div>
           )}
+        </AnimatePresence>
 
         {/* MODAL ADVERTENCIA DUPLICADOS */}
         <AnimatePresence>
@@ -4009,20 +4790,21 @@ export default function App() {
           )}
         </AnimatePresence>
 
+        <AnimatePresence>
           {editingItem && (
             <motion.div 
-              key="edit-modal-overlay"
+              key="edit-pipeline-modal-overlay"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-orbe-green/40 backdrop-blur-sm"
             >
               <motion.div 
-                key="edit-modal-content"
+                key="edit-pipeline-modal-content"
                 initial={{ scale: 0.95, y: 20 }}
                 animate={{ scale: 1, y: 0 }}
                 exit={{ scale: 0.95, y: 20 }}
-                className="bg-white w-full max-w-lg rounded-3xl shadow-2xl overflow-hidden border border-orbe-tan/30"
+                className="bg-white w-full max-w-lg rounded-t-3xl md:rounded-3xl shadow-2xl overflow-hidden border border-orbe-tan/30 h-[90vh] md:h-auto flex flex-col mt-auto md:mt-0"
               >
                 <div className="bg-blue-600 p-6 text-white text-center relative">
                   <Edit2 className="w-8 h-8 mx-auto mb-2 opacity-50" />
@@ -4050,7 +4832,7 @@ export default function App() {
                       }
                     );
                   }}
-                  className="p-8 space-y-6"
+                  className="p-8 space-y-6 overflow-y-auto flex-1 pb-32"
                 >
                   <div className="grid grid-cols-2 gap-4">
                     <div className="bg-gray-50 p-3 rounded-xl border border-gray-100">
@@ -4137,7 +4919,7 @@ export default function App() {
                 initial={{ scale: 0.9, y: 20 }}
                 animate={{ scale: 1, y: 0 }}
                 exit={{ scale: 0.9, y: 20 }}
-                className="bg-white w-full max-w-2xl max-h-[80vh] rounded-3xl shadow-2xl overflow-hidden flex flex-col border border-orbe-tan/30"
+                className="bg-white w-full max-w-2xl max-h-[90vh] rounded-t-3xl md:rounded-3xl shadow-2xl overflow-hidden flex flex-col border border-orbe-tan/30 mt-auto md:mt-0"
               >
                 <div className="bg-orbe-green p-6 text-white flex justify-between items-center">
                   <div>
@@ -4152,7 +4934,7 @@ export default function App() {
                   </button>
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-8 space-y-6">
+                <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-6 pb-32">
                   {/* Añadir Nota */}
                   <div className="bg-gray-50 p-4 rounded-xl border border-orbe-tan/30">
                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Add Note / Follow-up</label>
@@ -4187,7 +4969,7 @@ export default function App() {
                       </div>
                     ) : (
                       clientHistory.map((log, index) => (
-                        <div key={log.id ? `log-${log.id}` : `idx-${index}`} className="relative pl-6 border-l border-orbe-tan/20 last:border-l-0 pb-6 group">
+                        <div key={safeKey('history-item', log.id, index)} className="relative pl-6 border-l border-orbe-tan/20 last:border-l-0 pb-6 group">
                           <div className={`absolute -left-[5px] top-1 w-2.5 h-2.5 rounded-full border border-white shadow-sm transition-transform group-hover:scale-125 ${
                             log.type === 'status_change' ? 'bg-orange-400' : 
                             log.type === 'priority_change' ? 'bg-red-500' : 
