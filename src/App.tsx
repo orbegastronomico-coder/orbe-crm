@@ -12,7 +12,7 @@ import {
   Filter, MoreHorizontal, LogOut, Briefcase, Clock, CheckSquare,
   Settings, Save, XCircle, History, ArrowLeft, Loader2, Star,
   Mic, MicOff, Leaf, Eye, EyeOff, ShieldCheck, Target, Zap, ArrowUpDown,
-  Edit2, AlertTriangle, Trash2, MessageSquare, BarChart, BarChart3, PieChart, TrendingUp, Layers, Building2, Globe, ZapOff, CalendarOff, ShieldAlert
+  Edit2, AlertTriangle, Trash2, MessageSquare, BarChart, BarChart3, PieChart, TrendingUp, Layers, Building2, Globe, ZapOff, CalendarOff, ShieldAlert, Activity
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -107,6 +107,18 @@ const PIPELINE_STAGE_CARDS = [
   'Other'
 ] as const;
 
+const PIPELINE_ACTION_CARDS = [
+  'Send email',
+  'Send email with catalogue',
+  'Call',
+  'WhatsApp/IG message',
+  'Visit',
+  'Meeting',
+  'Drop samples',
+  'No action',
+  'Other'
+] as const;
+
 const getRawPipelineStage = (p: Partial<PipelineItem>) => {
   const raw = String(p.client_status || p.status || '').trim();
   return raw || 'No status';
@@ -128,6 +140,60 @@ const normalizePipelineStage = (stage: string) => {
   if (['client', 'customer', 'won'].includes(s)) return 'Client';
 
   if (['not interested', 'lost', 'disqualified', 'temporary discarded', 'discarded', 'temp discarded'].includes(s)) return 'Not interested';
+
+  return 'Other';
+};
+
+const getRawPipelineAction = (p: Partial<PipelineItem>) => {
+  const raw = String(p.last_activity || (p as any).last_action || '').trim();
+  return raw || 'No action';
+};
+
+const normalizePipelineAction = (action: string) => {
+  const a = String(action || '').trim().toLowerCase();
+
+  if (!a || a === 'no action') return 'No action';
+
+  if (['send email', 'email', 'send mail'].includes(a)) return 'Send email';
+
+  if ([
+    'send email with catalogue',
+    'email with catalogue',
+    'send catalogue',
+    'catalogue email',
+    'send catalog',
+    'send email with catalog'
+  ].includes(a)) return 'Send email with catalogue';
+
+  if (['call', 'phone call', 'llamada'].includes(a)) return 'Call';
+
+  if ([
+    'whatsapp/ig message',
+    'whatsapp',
+    'ig message',
+    'instagram message',
+    'whatsapp message'
+  ].includes(a)) return 'WhatsApp/IG message';
+
+  if (['visit', 'visita'].includes(a)) return 'Visit';
+
+  if (['meeting', 'reunion', 'reunión'].includes(a)) return 'Meeting';
+
+  if ([
+    'drop samples',
+    'samples',
+    'sample drop',
+    'samples delivered',
+    'entrega muestras',
+    'muestras'
+  ].includes(a)) return 'Drop samples';
+
+  if ([
+    'seguimiento iniciado',
+    'follow up started',
+    'follow-up started',
+    'review inactive lead'
+  ].includes(a)) return 'Other';
 
   return 'Other';
 };
@@ -403,8 +469,17 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const recognitionRef = useRef<any>(null);
 
+  const isValidOwner = (owner: any) => {
+    const normalized = String(owner || '').trim().toLowerCase();
+    return normalized === 'juanjo' || normalized === 'alejandro';
+  };
+
   const assignedClientIds = useMemo(() => {
-    return new Set(pipeline.map(p => String(p.client_id)));
+    return new Set(
+      pipeline
+        .filter(p => isValidOwner(p.owner_id))
+        .map(p => String(p.client_id))
+    );
   }, [pipeline]);
 
   useEffect(() => {
@@ -496,12 +571,31 @@ export default function App() {
 
   const isMissingNextActionDate = (p: PipelineItem) => {
     if (isDone(p.action_status)) return false;
-    const status = normalizeStatus(p.client_status);
-    const isExcluded = ['not interested', 'lost', 'disqualified', 'temp discarded', 'no longer exists'].includes(status);
-    if (isExcluded) return false;
+    const status = getEffectivePipelineStage(p);
+    if (isClosedPipelineStage(status)) return false;
     return !p.next_action_date;
   };
   // --- END ROLLING HELPERS ---
+
+  const getClientCompanyName = (clientId: string | number, fallback?: string) => {
+    const client = clients.find(c => String(c.client_id) === String(clientId) || String((c as any).id) === String(clientId));
+    return client?.company_name || fallback || 'Unknown company';
+  };
+
+  const isClosedPipelineStage = (stage: any) => {
+    const s = String(stage || '').trim().toLowerCase();
+    return [
+      'not interested',
+      'lost',
+      'disqualified',
+      'temporary discarded',
+      'discarded'
+    ].includes(s);
+  };
+
+  const getEffectivePipelineStage = (item: PipelineItem) => {
+    return String(item.client_status || item.status || '').trim();
+  };
 
   const fetchClients = async () => {
     setLoading(true);
@@ -593,8 +687,8 @@ export default function App() {
 
         const rawActionDate = p.next_action_date || p['actions date'] || p['action date'] || p.action_date || p.fecha_accion || p.next_step;
         const parsedActionDate = parseFlexibleDate(rawActionDate);
-        // NO calcular automáticamente si no viene en DB, mejor dejarlo como null o usar fallback si realmente es necesario
-        const actionDateVal = parsedActionDate ? parsedActionDate.toISOString() : calculateActionDate(dbPriority as Priority);
+        // Do not auto-calculate if missing to preserve pipeline gaps
+        const actionDateVal = parsedActionDate ? parsedActionDate.toISOString() : '';
 
         const dbActionStatus = p.action_status || p['action status'] || p['Action Status'] || p['Action status'] || p.estado_accion || 'Pending';
         const dbCreatedAt = p.created_at || p['created at'] || p['Created At'] || p.inserted_at || p.fecha_creacion || p.timestamp || p.date_created || p.created;
@@ -811,8 +905,11 @@ export default function App() {
       }
 
       // 2. IMPORTANTÍSIMO: Guardar en 'pipeline' para que el nuevo Log (que lee de pipeline) lo vea
+      const companyName = getClientCompanyName(clientId);
       const pipelineEntry: any = {
         client_id: clientId,
+        company_name: companyName,
+        company: companyName, // Redundant fallback for different schemas
         last_activity: last_activity,
         notes: notes || '',
         next_action_date: entry.next_action_date,
@@ -1020,7 +1117,7 @@ export default function App() {
     setMapping(['priority', 'prioridad', 'Priority'], item.priority);
     setMapping(['samples_sent', 'samples', 'muestras', 'Samples'], item.samples_sent);
     setMapping(['last_contact_date', 'fecha_contacto', 'last_contact'], new Date().toISOString());
-    setMapping(['company_name', 'company', 'Empresa'], item.company_name || 'Cliente');
+    setMapping(['company_name', 'company', 'Empresa'], getClientCompanyName(item.client_id, item.company_name));
     setMapping(['notes', 'notas'], reason);
 
     // Datos específicos de la posposición
@@ -1126,8 +1223,7 @@ export default function App() {
       if (data && data[0]) cols = Object.keys(data[0]);
     }
 
-    // Asegurar que company tenga valor (evita RLS failure si es obligatorio)
-    const clientCompany = prevItem.company_name || clients.find(c => String(c.client_id) === String(prevItem.client_id))?.company_name || 'Cliente';
+    const clientCompany = getClientCompanyName(prevItem.client_id, prevItem.company_name);
 
     const payload: any = {};
     
@@ -1152,9 +1248,19 @@ export default function App() {
     setMapping(['samples_sent', 'samples', 'muestras', 'Samples'], prevItem.samples_sent);
     
     // Columnas físicas detectadas
-    setMapping(['company', 'Empresa'], clientCompany);
+    setMapping(['company_name', 'company', 'Empresa'], clientCompany);
     setMapping(['notes', 'notas'], comments.trim());
-    setMapping(['action status', 'action_status'], 'Pending');
+
+    if (isClosedPipelineStage(statusForPriority)) {
+      setMapping(['action status', 'action_status'], 'Done');
+      setMapping(['priority', 'prioridad', 'Priority'], 'Low');
+      // No next action date if closed
+      payload.next_action_date = null;
+      if (cols.includes('actions date')) payload['actions date'] = null;
+      if (cols.includes('action_date')) payload['action_date'] = null;
+    } else {
+      setMapping(['action status', 'action_status'], 'Pending');
+    }
 
     try {
       // 1. Marcar el registro anterior como 'Done'
@@ -1180,8 +1286,7 @@ export default function App() {
         }
 
         await supabase.from('clients').update({ 
-          client_type: finalClientType, 
-          client_status: newStatus 
+          client_type: finalClientType
         }).eq(clientIdCol, prevItem.client_id);
       }
 
@@ -1215,16 +1320,29 @@ export default function App() {
   };
 
   const handleEditTask = async (id: string | number, clientId: string | number, updates: { last_activity: string, status: PipelineStatus, notes: string }) => {
-    const priority = calculatePriority(updates.status, updates.last_activity);
+    const isClosed = isClosedPipelineStage(updates.status);
+    const priority = isClosed ? 'Low' : calculatePriority(updates.status, updates.last_activity);
     
     try {
+      const finalNotes = isClosed 
+        ? `${updates.notes}\n\n[System: Account marked as ${updates.status} - Closed operatively]`
+        : updates.notes;
+
       // 1. Actualizar el registro en 'pipeline'
       const pipelineUpdates: any = {
         last_activity: updates.last_activity,
         client_status: updates.status,
         priority: priority,
-        notes: updates.notes
+        notes: finalNotes
       };
+
+      if (isClosed) {
+        const actionCol = pipelineColumns.find(c => ['action status', 'action_status'].includes(c)) || 'action_status';
+        pipelineUpdates[actionCol] = 'Done';
+        
+        const dateCol = pipelineColumns.find(c => ['next_action_date', 'actions date', 'action_date', 'fecha_accion'].includes(c)) || 'next_action_date';
+        pipelineUpdates[dateCol] = null;
+      }
 
       // Handle potential column variations
       if (pipelineColumns.includes('last_action')) pipelineUpdates.last_action = updates.last_activity;
@@ -1233,15 +1351,6 @@ export default function App() {
       const { error: pipeError } = await supabase.from('pipeline').update(pipelineUpdates).eq('id', id);
 
       if (pipeError) throw pipeError;
-
-      // 2. Sincronizar el status del cliente en la tabla 'clients'
-      const clientIdCol = clients.length > 0 && Object.keys(clients[0]).includes('client_id') ? 'client_id' : 'id';
-      const clientUpdates: any = { client_type: updates.status, client_status: updates.status };
-      if (clients.length > 0 && Object.keys(clients[0]).includes('status')) clientUpdates.status = updates.status;
-
-      const { error: clientError } = await supabase.from('clients').update(clientUpdates).eq(clientIdCol, clientId);
-
-      if (clientError) throw clientError;
 
       addHistoryEntry(clientId, 'note', `Registro editado manualmente. Nuevo status: ${updates.status}, Acción: ${updates.last_activity}, Prioridad: ${priority}`, updates.notes);
       
@@ -1297,7 +1406,7 @@ export default function App() {
     setMapping(['next_action_date', 'actions date', 'action_date', 'fecha_accion'], calculateActionDate('High'));
     setMapping(['last_contact_date', 'fecha_contacto', 'last_contact'], new Date().toISOString());
     setMapping(['samples_sent', 'samples', 'muestras', 'Samples'], '-');
-    setMapping(['company_name', 'company'], client.company_name);
+    setMapping(['company_name', 'company', 'Empresa'], client.company_name);
     setMapping(['action_status', 'action status'], 'Pending');
 
     try {
@@ -1480,11 +1589,15 @@ export default function App() {
     // 1. Filtrar por propietario (si no es Admin y no es 'All')
     let filtered = pipeline;
 
-    // Filtro crítico: Solo acciones PENDING o POSTPONE
+    // Filtro crítico: Solo acciones PENDING o POSTPONE, EXCLUYENDO leads cerrados
     filtered = filtered.filter(p => {
-      const status = String(p.action_status || p['action status'] || '').toLowerCase().trim();
-      // Si no tiene status, asumimos Pending (retrocompatibilidad)
-      return status === 'pending' || status === 'postpone' || status === 'postponed' || status === '';
+      const actionStatus = String(p.action_status || p['action status'] || '').toLowerCase().trim();
+      const isOperational = actionStatus === 'pending' || actionStatus === 'postpone' || actionStatus === 'postponed' || actionStatus === '';
+      if (!isOperational) return false;
+
+      // Excluir si el stage es cerrado (Not interested, etc.)
+      const stage = getEffectivePipelineStage(p);
+      return !isClosedPipelineStage(stage);
     });
 
     if (currentUser === 'All') {
@@ -1588,28 +1701,61 @@ export default function App() {
     return sortedResult;
   }, [pipeline, currentUser, searchTerm, statusFilter, sortBy]);
 
-  const filteredClients = useMemo(() => {
-    let result = clients.filter(c => 
+  const baseFilteredClients = useMemo(() => {
+    const result = clients.filter(c => 
       (c.company_name?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
       (c.contact_name?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
       (c.email?.toLowerCase() || '').includes(searchTerm.toLowerCase())
     );
 
     if (statusFilter !== 'All') {
-      result = result.filter(c => c.client_type === statusFilter);
+      return result.filter(c => c.client_type === statusFilter);
     }
+    return result;
+  }, [clients, searchTerm, statusFilter]);
+
+  const assignedInBase = useMemo(() => {
+    return baseFilteredClients.filter(c => assignedClientIds.has(String(c.client_id || (c as any).id)));
+  }, [baseFilteredClients, assignedClientIds]);
+
+  const unassignedInBase = useMemo(() => {
+    return baseFilteredClients.filter(c => !assignedClientIds.has(String(c.client_id || (c as any).id)));
+  }, [baseFilteredClients, assignedClientIds]);
+
+  const filteredClients = useMemo(() => {
+    let result = [...baseFilteredClients];
 
     if (assignmentFilter === 'assigned') {
-      result = result.filter(c => pipeline.some(p => String(p.client_id) === String(c.id)));
+      result = assignedInBase;
     } else if (assignmentFilter === 'unassigned') {
-      result = result.filter(c => !pipeline.some(p => String(p.client_id) === String(c.id)));
+      result = unassignedInBase;
     }
 
     // Apply alphabetical sort by company as default
-    return result.sort((a, b) => 
+    return result.slice().sort((a, b) => 
       (a.company_name || '').localeCompare(b.company_name || '')
     );
-  }, [clients, searchTerm, assignmentFilter, statusFilter, pipeline]);
+  }, [baseFilteredClients, assignedInBase, unassignedInBase, assignmentFilter]);
+
+  const latestPipelineByClient = useMemo(() => {
+    const map = new Map<string, PipelineItem>();
+
+    pipeline.forEach((item) => {
+      const clientId = String(item.client_id || '').trim();
+      if (!clientId) return;
+
+      const existing = map.get(clientId);
+
+      const itemId = Number(item.id) || 0;
+      const existingId = Number(existing?.id) || 0;
+
+      if (!existing || itemId > existingId) {
+        map.set(clientId, item);
+      }
+    });
+
+    return Array.from(map.values());
+  }, [pipeline]);
 
   const overviewData = useMemo(() => {
     const isDateInRange = (dateStr: string | null | undefined) => {
@@ -1633,23 +1779,32 @@ export default function App() {
       return true;
     };
 
-    // Build the unified dataset
-    const overviewPipelineRows = pipeline.map(p => {
+    // Build the unified dataset using ONLY the latest rows for each client
+    const overviewPipelineRows = latestPipelineByClient.map(p => {
       const stage = getRawPipelineStage(p);
       const effectiveStage = normalizePipelineStage(stage);
+      
+      const action = getRawPipelineAction(p);
+      const effectiveAction = normalizePipelineAction(action);
+
+      const relatedClient = clients.find(c => String(c.client_id) === String(p.client_id) || String((c as any).id) === String(p.client_id));
       
       return {
         ...p,
         effectiveStage,
+        effectiveAction,
+        relatedClient,
         isOverdue: isOverdue(p.next_action_date, p.action_status),
         hasNoNextAction: isMissingNextActionDate(p)
       };
     }).filter(p => {
       const matchesSeller = overviewOwnerFilter === 'All' || p.owner_id === overviewOwnerFilter;
-      const matchesDate = isDateInRange(p.last_contact_date || p.created_at);
+      
+      // Date filter applies to the latest record's relevant date
+      const matchesDate = isDateInRange(p.last_contact_date || p.created_at || p.next_action_date);
       
       let matchesType = true;
-      const type = (p.client_type || '').toLowerCase();
+      const type = (p.relatedClient?.client_type || p.client_type || '').toLowerCase();
       if (overviewClientTypeFilter === 'Client') {
         matchesType = type === 'client' || type === 'customer';
       } else if (overviewClientTypeFilter === 'Potential client') {
@@ -1679,7 +1834,7 @@ export default function App() {
       filteredC,
       totalPipeline: overviewPipelineRows.length
     };
-  }, [pipeline, clients, overviewOwnerFilter, overviewDateRange, overviewClientTypeFilter]);
+  }, [latestPipelineByClient, clients, overviewOwnerFilter, overviewDateRange, overviewClientTypeFilter]);
 
   if (!session) {
     return (
@@ -2081,7 +2236,7 @@ export default function App() {
                   }`}
                 >
                   <p className="text-[7px] md:text-[8px] font-bold uppercase tracking-tight opacity-70">Pot.</p>
-                  <p className="text-sm md:text-xl font-black leading-none">{clients.length}</p>
+                  <p className="text-sm md:text-xl font-black leading-none">{baseFilteredClients.length}</p>
                 </button>
 
                 <button 
@@ -2093,7 +2248,7 @@ export default function App() {
                   }`}
                 >
                   <p className="text-[7px] md:text-[8px] font-bold uppercase tracking-tight opacity-70">Asig.</p>
-                  <p className="text-sm md:text-xl font-black leading-none">{assignedClientIds.size}</p>
+                  <p className="text-sm md:text-xl font-black leading-none">{assignedInBase.length}</p>
                 </button>
 
                 <button 
@@ -2104,8 +2259,8 @@ export default function App() {
                     : 'bg-white text-red-500 border-orbe-tan/40 opacity-60'
                   }`}
                 >
-                  <p className="text-[7px] md:text-[8px] font-bold uppercase tracking-tight opacity-70">Pend.</p>
-                  <p className="text-sm md:text-xl font-black leading-none">{clients.length - assignedClientIds.size}</p>
+                  <p className="text-[7px] md:text-[8px] font-bold uppercase tracking-tight opacity-70">Unass.</p>
+                  <p className="text-sm md:text-xl font-black leading-none">{unassignedInBase.length}</p>
                 </button>
               </>
             )}
@@ -2164,8 +2319,7 @@ export default function App() {
                       mobile: newClientForm.mobile || '',
                       address_line_1: newClientForm.address_line_1 || '',
                       notes: newClientForm.notes || '',
-                      client_type: 'Potential client',
-                      client_status: 'Potential client'
+                      client_type: 'Potential client'
                     };
 
                     if (!supabase) {
@@ -2391,7 +2545,7 @@ export default function App() {
 
                 <div className="overflow-auto flex-1 scrollbar-thin scrollbar-thumb-orbe-tan/20 scrollbar-track-transparent p-4 md:p-0">
                   {/* VISTA DESKTOP: TABLA */}
-                  <table className="w-full text-left border-collapse hidden md:table">
+                  <table className="w-full text-left border-collapse hidden md:table desktop-table-only">
                     <thead className="bg-[#fcfaf7] border-b border-orbe-tan/30 sticky top-0 z-10 whitespace-nowrap">
                       <tr>
                         <th className="p-3 text-[10px] font-bold text-gray-400 uppercase tracking-widest">Company</th>
@@ -2422,7 +2576,7 @@ export default function App() {
                             <td className="px-3 py-2">
                               <div className="flex items-center gap-2">
                                 <UserCircle size={14} className="text-orbe-tan" />
-                                <span className="font-semibold text-gray-600">{item.owner_id}</span>
+                                <span className="font-semibold text-gray-600">{item.owner_id || (item as any).owner || 'Unassigned'}</span>
                               </div>
                             </td>
                             <td className="px-3 py-2">
@@ -2563,7 +2717,7 @@ export default function App() {
                               <div>
                                 <h4 className="font-black text-orbe-green text-lg leading-tight uppercase tracking-tight">{item.company_name}</h4>
                                 <div className="flex items-center gap-2 mt-1 text-gray-400 text-[10px] uppercase font-bold tracking-widest">
-                                  <UserCircle size={10} /> {item.owner_id} | #{item.client_id}
+                                  <UserCircle size={10} /> {item.owner_id || (item as any).owner || 'Unassigned'} | #{item.client_id}
                                 </div>
                               </div>
                               <div className={`px-3 py-1 rounded-full font-black text-[9px] uppercase tracking-tighter border ${
@@ -2775,7 +2929,7 @@ export default function App() {
                           { label: 'Potential Clients', value: filteredC.filter(c => !isClient(c.client_type || '') && !isDiscarded(c.client_type || '')).length, color: 'text-blue-600', bg: 'bg-blue-50', icon: <Target size={18} />, items: filteredC.filter(c => !isClient(c.client_type || '') && !isDiscarded(c.client_type || '')) },
                           { label: 'Customers', value: filteredC.filter(c => isClient(c.client_type || '')).length, color: 'text-green-600', bg: 'bg-green-50', icon: <Briefcase size={18} />, items: filteredC.filter(c => isClient(c.client_type || '')) },
                           { label: 'Discarded', value: filteredC.filter(c => isDiscarded(c.client_type || '')).length, color: 'text-gray-400', bg: 'bg-gray-100', icon: <XCircle size={18} />, items: filteredC.filter(c => isDiscarded(c.client_type || '')) },
-                          { label: 'Active Pipeline', value: overviewPipelineRows.length, color: 'text-orange-600', bg: 'bg-orange-50', icon: <Layers size={18} />, items: overviewPipelineRows }
+                          { label: 'Current Clients', value: overviewPipelineRows.length, color: 'text-orange-600', bg: 'bg-orange-50', icon: <Layers size={18} />, items: overviewPipelineRows }
                         ];
 
                         return (
@@ -2837,7 +2991,62 @@ export default function App() {
                               <div className="space-y-4">
                                 <div>
                                   <div className="text-3xl font-black text-orbe-green leading-none">{items.length}</div>
-                                  <div className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mt-2 px-1 border-l-2 border-orbe-tan/20">Pipeline records</div>
+                                  <div className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mt-2 px-1 border-l-2 border-orbe-tan/20">Latest client status</div>
+                                </div>
+
+                                <div className="grid grid-cols-3 gap-2 pt-2 border-t border-gray-50">
+                                  <div className="text-center">
+                                    <div className="text-[10px] font-black text-blue-600 leading-none">{pending}</div>
+                                    <div className="text-[7px] font-bold text-gray-400 uppercase mt-1">Pending</div>
+                                  </div>
+                                  <div className="text-center">
+                                    <div className="text-[10px] font-black text-green-600 leading-none">{done}</div>
+                                    <div className="text-[7px] font-bold text-gray-400 uppercase mt-1">Done</div>
+                                  </div>
+                                  <div className="text-center">
+                                    <div className={`text-[10px] font-black leading-none ${overdue > 0 ? 'text-red-500' : 'text-gray-300'}`}>{overdue}</div>
+                                    <div className="text-[7px] font-bold text-gray-400 uppercase mt-1">Overdue</div>
+                                  </div>
+                                </div>
+                              </div>
+                            </motion.div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* PIPELINE ACTIONS GRID */}
+                    <div className="space-y-6 mt-12 pb-12">
+                      <div className="flex items-center gap-3 px-1">
+                        <Activity size={20} className="text-orbe-green" />
+                        <h3 className="text-lg font-black text-orbe-green uppercase tracking-tight">Pipeline Actions</h3>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                        {PIPELINE_ACTION_CARDS.map((action, idx) => {
+                          const items = overviewData.overviewPipelineRows.filter(p => (p as any).effectiveAction === action);
+                          const pending = items.filter(p => p.action_status !== 'Done').length;
+                          const done = items.filter(p => p.action_status === 'Done').length;
+                          const overdue = items.filter(p => p.isOverdue).length;
+
+                          return (
+                            <motion.div
+                              key={safeKey('action-card', action, idx)}
+                              whileHover={{ y: -5 }}
+                              onClick={() => setSelectedDetail({ type: 'action', label: `Action: ${action}`, items })}
+                              className="p-6 rounded-3xl border bg-white border-orbe-tan/30 hover:border-orbe-green/30 shadow-sm cursor-pointer transition-all"
+                            >
+                              <div className="flex justify-between items-start mb-4">
+                                <h4 className="text-xs font-black uppercase tracking-widest text-orbe-green">
+                                  {action}
+                                </h4>
+                                <ChevronRight size={14} className="text-orbe-tan" />
+                              </div>
+
+                              <div className="space-y-4">
+                                <div>
+                                  <div className="text-3xl font-black text-orbe-green leading-none">{items.length}</div>
+                                  <div className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mt-2 px-1 border-l-2 border-orbe-tan/20">Latest client action</div>
                                 </div>
 
                                 <div className="grid grid-cols-3 gap-2 pt-2 border-t border-gray-50">
@@ -3097,7 +3306,7 @@ export default function App() {
                       </div>
                       
                       <div className="max-h-[600px] overflow-auto scrollbar-thin scrollbar-thumb-orbe-tan/20">
-                        <table className="w-full text-left">
+                        <table className="w-full text-left desktop-table-only">
                           <thead className="bg-[#fcfaf7] sticky top-0 border-b border-orbe-tan/20 z-10">
                             <tr>
                               <th className="p-4 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Empresa</th>
@@ -3256,7 +3465,9 @@ export default function App() {
                       
                       const filteredPipeline = pipeline.filter(p => {
                         const matchesSeller = commandSellerFilter === 'All' || p.owner_id === commandSellerFilter;
-                        return matchesSeller && !isDone(p.action_status);
+                        const isNotDone = !isDone(p.action_status);
+                        const isOperational = !isClosedPipelineStage(getEffectivePipelineStage(p));
+                        return matchesSeller && isNotDone && isOperational;
                       });
 
                       const overdueItems = filteredPipeline.filter(p => isOverdue(p.next_action_date, p.action_status))
@@ -3299,7 +3510,7 @@ export default function App() {
                             {overdueItems.length > 0 && (
                               <div className="bg-white rounded-2xl border border-red-100 overflow-hidden shadow-sm">
                                 <div className="overflow-x-auto hidden md:block">
-                                  <table className="w-full text-left text-[11px]">
+                                  <table className="w-full text-left text-[11px] desktop-table-only">
                                     <thead className="bg-red-50 text-red-700">
                                       <tr>
                                         <th className="p-3 text-[9px] font-black uppercase tracking-widest">Company</th>
@@ -3319,7 +3530,7 @@ export default function App() {
                                           <tr key={getPipelineKey(item, 'overdue-row', index)} className="hover:bg-red-50/30 transition-colors">
                                             <td className="p-3 font-bold text-orbe-green">{item.company_name}</td>
                                             <td className="p-3">
-                                               <span className="px-2 py-0.5 bg-gray-100 rounded text-[8px] font-black uppercase">{item.owner_id}</span>
+                                               <span className="px-2 py-0.5 bg-gray-100 rounded text-[8px] font-black uppercase">{item.owner_id || (item as any).owner || 'Unassigned'}</span>
                                             </td>
                                             <td className="p-3 italic text-gray-500">{item.last_activity}</td>
                                             <td className="p-3">
@@ -3370,7 +3581,7 @@ export default function App() {
                                           <div>
                                             <h6 className="font-black text-orbe-green text-[13px] uppercase tracking-tight">{item.company_name}</h6>
                                             <div className="flex items-center gap-2 mt-1">
-                                              <span className="px-1.5 py-0.5 bg-gray-100 rounded text-[7px] font-black uppercase text-gray-400">{item.owner_id}</span>
+                                              <span className="px-1.5 py-0.5 bg-gray-100 rounded text-[7px] font-black uppercase text-gray-400">{item.owner_id || (item as any).owner || 'Unassigned'}</span>
                                               <span className="text-[7px] font-black text-gray-300 uppercase tracking-widest">{item.status}</span>
                                             </div>
                                           </div>
@@ -3510,7 +3721,7 @@ export default function App() {
                                                <div className="flex-1">
                                                  <h6 className="font-black text-orbe-green text-[13px] uppercase tracking-tight leading-none">{item.company_name}</h6>
                                                  <div className="flex items-center gap-2 mt-1.5">
-                                                   <span className="text-[8px] font-black text-gray-400 uppercase tracking-widest">{item.owner_id}</span>
+                                                   <span className="text-[8px] font-black text-gray-400 uppercase tracking-widest">{item.owner_id || (item as any).owner || 'Unassigned'}</span>
                                                    <span className="text-[8px] text-gray-300">•</span>
                                                    <span className="text-[8px] font-bold text-orbe-tan uppercase">{item.status}</span>
                                                  </div>
@@ -3703,7 +3914,7 @@ export default function App() {
 
                 <div className="overflow-auto flex-1 scrollbar-thin scrollbar-thumb-orbe-tan scrollbar-track-transparent">
                   {/* VISTA DESKTOP: TABLA */}
-                  <table className="hidden md:table min-w-[1100px] w-full text-left border-collapse">
+                  <table className="hidden md:table min-w-[1100px] w-full text-left border-collapse desktop-table-only">
                     <thead className="bg-[#fcfaf7] border-b border-orbe-tan/30 sticky top-0 z-10 whitespace-nowrap">
                       <tr>
                         <th className="p-5 text-[10px] font-bold text-gray-400 uppercase tracking-widest">ID</th>
@@ -3963,7 +4174,7 @@ export default function App() {
                   <div className="p-6 border-b border-orbe-tan/30 flex justify-between items-center bg-white sticky top-0 z-30">
                     <div>
                       <h4 className="text-sm font-black text-orbe-green uppercase tracking-widest">{selectedDetail.label}</h4>
-                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Listing affected potential clients • {selectedDetail.items.length} records</p>
+                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Listing unique clients • {selectedDetail.items.length} current status</p>
                     </div>
                     <button 
                       onClick={() => setSelectedDetail(null)}
@@ -3989,26 +4200,41 @@ export default function App() {
                             className="bg-white rounded-2xl border border-orbe-tan/20 shadow-sm overflow-hidden flex flex-col hover:border-orbe-green/30 transition-all"
                           >
                             <div className="p-4 border-b border-orbe-tan/10 bg-gray-50/30 flex justify-between items-center">
-                              <h5 className="font-black text-orbe-green uppercase text-xs truncate max-w-[70%]">{companyName}</h5>
+                              <div>
+                                <h5 className="font-black text-orbe-green uppercase text-xs truncate">{companyName}</h5>
+                                <p className="text-[8px] font-bold text-gray-400 uppercase tracking-widest mt-0.5">Client ID: {client?.client_id || item.client_id || 'N/A'}</p>
+                              </div>
                               <span className="px-2 py-0.5 bg-orbe-green/5 text-orbe-green text-[8px] font-black rounded-lg uppercase border border-orbe-tan/10">
                                 {client?.client_type || item.client_type || 'Potential'}
                               </span>
                             </div>
-                            <div className="p-4 grid grid-cols-2 lg:grid-cols-3 gap-4">
+                            <div className="p-4 grid grid-cols-2 lg:grid-cols-4 gap-4">
                               <div className="space-y-1">
-                                <label className="text-[7px] font-black text-gray-400 uppercase tracking-widest">Ownership & Pipeline</label>
+                                <label className="text-[7px] font-black text-gray-400 uppercase tracking-widest">Responsable</label>
                                 <div className="flex items-center gap-2">
                                   <UserCircle size={10} className="text-orbe-green/40" />
                                   <span className="text-[9px] font-black text-orbe-green uppercase">{item.owner_id || mainP?.owner_id || 'Unassigned'}</span>
                                 </div>
                                 <div className="flex items-center gap-2">
                                   <Layers size={10} className="text-orbe-green/40" />
-                                  <span className="text-[9px] font-bold text-gray-600 uppercase">{item.effectiveStage || mainP?.client_status || mainP?.status || 'No status'}</span>
+                                  <span className="text-[9px] font-bold text-gray-600 uppercase truncate">{item.effectiveStage || mainP?.client_status || mainP?.status || 'No status'}</span>
                                 </div>
                               </div>
 
                               <div className="space-y-1">
-                                <label className="text-[7px] font-black text-gray-400 uppercase tracking-widest">Scheduling</label>
+                                <label className="text-[7px] font-black text-gray-400 uppercase tracking-widest">Latest Action</label>
+                                <div className="flex items-center gap-2">
+                                  <Activity size={10} className="text-orbe-green/40" />
+                                  <span className="text-[9px] font-black text-orbe-green uppercase truncate">{item.effectiveAction || mainP?.last_activity || mainP?.last_action || 'No action'}</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <div className={`w-1.5 h-1.5 rounded-full ${isDone(mainP?.action_status) ? 'bg-green-500' : 'bg-blue-500'}`} />
+                                  <span className="text-[9px] font-bold text-gray-600 uppercase">{mainP?.action_status || 'Pending'}</span>
+                                </div>
+                              </div>
+
+                              <div className="space-y-1">
+                                <label className="text-[7px] font-black text-gray-400 uppercase tracking-widest">Dates & Priority</label>
                                 <div className="flex items-center gap-2">
                                   <Calendar size={10} className="text-orbe-green/40" />
                                   <span className={`text-[9px] font-black uppercase ${isOverdue(mainP?.next_action_date, mainP?.action_status) ? 'text-red-500' : 'text-gray-600'}`}>
@@ -4016,16 +4242,21 @@ export default function App() {
                                   </span>
                                 </div>
                                 <div className="flex items-center gap-2">
-                                  <History size={10} className="text-orbe-green/40" />
-                                  <span className="text-[9px] font-black text-gray-400 uppercase">Last: {formatDateSafe(mainP?.last_contact_date)}</span>
+                                  <div className={`text-[8px] font-black px-1.5 rounded-sm uppercase tracking-tighter ${
+                                    (mainP?.priority === 'High') ? 'bg-red-50 text-red-600' :
+                                    (mainP?.priority === 'Medium') ? 'bg-amber-50 text-amber-600' :
+                                    'bg-gray-50 text-gray-500'
+                                  }`}>
+                                    {mainP?.priority || 'Low'}
+                                  </div>
+                                  <span className="text-[8px] font-bold text-gray-400 uppercase">Last: {formatDateSafe(mainP?.last_contact_date)}</span>
                                 </div>
                               </div>
 
                               <div className="space-y-1 col-span-2 lg:col-span-1">
-                                <label className="text-[7px] font-black text-gray-400 uppercase tracking-widest">Issues/Notes</label>
-                                {(!mainP && !item.principal) && <div className="text-[9px] font-bold text-red-400 uppercase italic">No pipeline record</div>}
-                                {item.hasNoNextAction && <div className="text-[9px] font-bold text-amber-500 uppercase italic">No next action scheduled</div>}
-                                <p className="text-[9px] text-gray-400 italic line-clamp-2">{mainP?.notes || client?.notes || item.notes || 'No notes'}</p>
+                                <label className="text-[7px] font-black text-gray-400 uppercase tracking-widest">Comments</label>
+                                {item.hasNoNextAction && <div className="text-[8px] font-bold text-amber-500 uppercase italic">No next action scheduled</div>}
+                                <p className="text-[9px] text-gray-400 italic line-clamp-3 leading-tight">{mainP?.notes || client?.notes || item.notes || 'No notes'}</p>
                               </div>
                             </div>
                             <div className="p-3 bg-gray-50/50 border-t border-orbe-tan/10 flex justify-end gap-3">
@@ -4103,12 +4334,12 @@ export default function App() {
                   <div className="flex-1 overflow-auto p-0 scrollbar-thin scrollbar-thumb-orbe-tan/20 pb-32">
                     {selectedPostponedList.items.length === 0 ? (
                       <div className="p-20 text-center text-gray-400 italic">
-                        No postponed actions found for this seller.
+                        No postponed actions found for this seller ({selectedPostponedList.owner}).
                       </div>
                     ) : (
                       <>
                         {/* DESKTOP TABLE */}
-                        <table className="w-full text-left border-collapse hidden md:table">
+                        <table className="w-full text-left border-collapse hidden md:table desktop-table-only">
                           <thead className="bg-gray-50 border-b border-orbe-tan/20 sticky top-0 z-10">
                             <tr>
                               <th className="p-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">Company</th>
@@ -4438,7 +4669,7 @@ export default function App() {
                     <p className="text-white/60 text-[10px] uppercase tracking-[0.2em] font-black">{taskToAccomplish.company_name}</p>
                     <div className="flex items-center justify-center gap-2 mt-2 py-1 px-3 bg-white/10 rounded-full w-fit mx-auto border border-white/5">
                       <UserCircle size={12} className="text-white/40" />
-                      <span className="text-[9px] font-bold text-white/70 uppercase">Responsable: {taskToAccomplish.owner_id || (taskToAccomplish as any).owner || (taskToAccomplish as any).assigned_to || 'Unassigned'}</span>
+                      <span className="text-[9px] font-bold text-white/70 uppercase">Responsable: {taskToAccomplish.owner_id || (taskToAccomplish as any).owner || (taskToAccomplish as any).assigned_to || (taskToAccomplish as any).assigned_to_user || 'Unassigned'}</span>
                     </div>
                     <button 
                       onClick={() => setTaskToAccomplish(null)}
@@ -4621,7 +4852,13 @@ export default function App() {
                         <UserCircle size={20} className="text-orbe-green opacity-50" />
                         <div>
                           <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Assigned Owner</p>
-                          <p className="text-xs font-black text-orbe-green uppercase">{postponeItem.owner || 'Unassigned'}</p>
+                          <p className="text-xs font-black text-orbe-green uppercase">
+                            {postponeItem.owner_id || 
+                             (postponeItem as any).owner || 
+                             (postponeItem as any).assigned_to || 
+                             (postponeItem as any).assigned_to_user || 
+                             'Unassigned'}
+                          </p>
                         </div>
                         <span className="ml-auto text-[8px] font-black bg-white px-2 py-1 rounded-md border border-gray-200 text-gray-400 uppercase tracking-tighter">Persistent</span>
                       </div>

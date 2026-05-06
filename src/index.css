@@ -30,7 +30,7 @@
 
 /* RESPONSIVE ENFORCEMENT - ORBE MOBILE FIRST */
 @media (max-width: 768px) {
-  table, thead, tbody, th, td, tr {
+  .desktop-table-only {
     display: none !important;
   }
 
