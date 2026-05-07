@@ -76,6 +76,7 @@ interface Client {
   notes?: string;
   client_type?: 'Potential client' | 'Client' | 'Temporary Discarded';
   created_at?: string;
+  product_interest_tags?: string[];
 }
 
 interface PipelineItem {
@@ -95,6 +96,157 @@ interface PipelineItem {
   action_status: 'Pending' | 'Done' | string;
   created_at?: string;
 }
+
+const PRODUCT_INTEREST_TAGS = [
+  'olive_oil',
+  'anchovies',
+  'seafood_preserves',
+  'iberico_ham',
+  'iberico_lomo',
+  'iberico_charcuterie',
+  'nuts',
+  'premium_crisps'
+] as const;
+
+type ProductTag = typeof PRODUCT_INTEREST_TAGS[number];
+
+const PRODUCT_TAG_LABELS: Record<ProductTag, string> = {
+  olive_oil: 'Olive Oil',
+  anchovies: 'Anchovies',
+  seafood_preserves: 'Seafood Preserves',
+  iberico_ham: 'Ibérico Ham',
+  iberico_lomo: 'Ibérico Lomo',
+  iberico_charcuterie: 'Ibérico Charcuterie',
+  nuts: 'Nuts',
+  premium_crisps: 'Premium Crisps'
+};
+
+const getProductTagLabel = (tag: string) => {
+  return PRODUCT_TAG_LABELS[tag as ProductTag] || tag;
+};
+
+const renderProductTags = (clientTags: string[] | undefined, maxVisible = 3) => {
+  if (!clientTags || clientTags.length === 0) {
+    return (
+      <span className="text-[8px] text-gray-400/60 font-bold uppercase tracking-widest italic select-none">No product tags</span>
+    );
+  }
+
+  const visibleTags = clientTags.slice(0, maxVisible);
+  const remainingCount = clientTags.length - maxVisible;
+
+  return (
+    <div className="flex flex-wrap gap-1 items-center">
+      {visibleTags.map((tag) => (
+        <span 
+          key={tag} 
+          className="text-[8px] bg-orbe-tan/10 text-orbe-green px-2 py-0.5 rounded-md border border-orbe-tan/30 uppercase font-black tracking-tighter whitespace-nowrap"
+        >
+          {getProductTagLabel(tag)}
+        </span>
+      ))}
+      {remainingCount > 0 && (
+        <span className="text-[8px] text-orbe-green font-black bg-orbe-tan/20 px-1.5 py-0.5 rounded-md border border-orbe-tan/40">
+          +{remainingCount}
+        </span>
+      )}
+    </div>
+  );
+};
+
+interface OrbeModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  title: string;
+  subtitle?: string;
+  icon?: React.ReactNode;
+  children: React.ReactNode;
+  footer?: React.ReactNode;
+  size?: 'sm' | 'md' | 'lg' | 'xl' | '2xl' | 'full';
+  variant?: 'default' | 'success' | 'warning' | 'danger' | 'blue' | 'amber';
+  mobileMode?: 'fullscreen' | 'bottom-sheet';
+  modalKey?: string;
+}
+
+const OrbeModal = ({ 
+  isOpen, 
+  onClose, 
+  title, 
+  subtitle, 
+  icon, 
+  children, 
+  footer, 
+  size = 'md', 
+  variant = 'default',
+  mobileMode = 'bottom-sheet',
+  modalKey = 'modal'
+}: OrbeModalProps) => {
+  const sizeClasses = {
+    sm: 'max-w-sm',
+    md: 'max-w-md',
+    lg: 'max-w-2xl',
+    xl: 'max-w-4xl',
+    '2xl': 'max-w-5xl',
+    full: 'max-w-7xl'
+  };
+
+  const variantClasses = {
+    default: 'bg-orbe-green',
+    success: 'bg-green-600',
+    warning: 'bg-amber-600',
+    amber: 'bg-amber-500',
+    danger: 'bg-red-600',
+    blue: 'bg-blue-600'
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+      <motion.div 
+        key={`${modalKey}-overlay`}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        onClick={onClose}
+        className="absolute inset-0 bg-orbe-green/40 backdrop-blur-sm"
+      />
+      <motion.div 
+        key={`${modalKey}-content`}
+        initial={{ scale: 0.9, y: 20, opacity: 0 }}
+        animate={{ scale: 1, y: 0, opacity: 1 }}
+        exit={{ scale: 0.9, y: 20, opacity: 0 }}
+        className={`bg-white w-full ${sizeClasses[size]} rounded-t-3xl md:rounded-3xl shadow-2xl overflow-hidden flex flex-col border border-orbe-tan/30 max-h-[90vh] z-10 ${mobileMode === 'fullscreen' ? 'h-full md:h-auto mt-0' : 'mt-auto md:mt-0'}`}
+      >
+        {/* Header */}
+        <div className={`${variantClasses[variant]} p-5 md:p-6 text-white flex justify-between items-center shrink-0`}>
+          <div className="flex flex-1 items-center gap-3 overflow-hidden">
+            {icon && <div className="p-2 bg-white/10 rounded-xl shrink-0">{icon}</div>}
+            <div className="overflow-hidden">
+              <h3 className="text-xl md:text-2xl font-bold italic tracking-tight truncate">{title}</h3>
+              {subtitle && <p className="text-white/60 text-[10px] md:text-xs font-medium tracking-widest uppercase mt-0.5 truncate">{subtitle}</p>}
+            </div>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full transition-colors text-white/70 hover:text-white shrink-0 ml-2">
+            <XCircle size={28} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto p-5 md:p-8 space-y-6 scrollbar-thin scrollbar-thumb-orbe-tan/40 scrollbar-track-transparent">
+          {children}
+        </div>
+
+        {/* Footer */}
+        {footer && (
+          <div className="p-4 md:p-6 bg-gray-50 border-t border-orbe-tan/20 shrink-0">
+            {footer}
+          </div>
+        )}
+      </motion.div>
+    </div>
+  );
+};
 
 const PIPELINE_STAGE_CARDS = [
   '1st contact',
@@ -141,6 +293,18 @@ const normalizePipelineStage = (stage: string) => {
 
   if (['not interested', 'lost', 'disqualified', 'temporary discarded', 'discarded', 'temp discarded'].includes(s)) return 'Not interested';
 
+  return 'Other';
+};
+
+const normalizeActionType = (value: string) => {
+  const v = String(value || '').toLowerCase().trim();
+  if (v.includes('email with catalogue') || v.includes('catalogue') || v.includes('catalog')) return 'Send email with catalogue';
+  if (v.includes('email')) return 'Send email';
+  if (v.includes('call') || v.includes('llamada')) return 'Call';
+  if (v.includes('meeting') || v.includes('reunion') || v.includes('reunión')) return 'Meeting';
+  if (v.includes('whatsapp') || v.includes('instagram') || v === 'ig' || v.includes('ig message')) return 'WhatsApp/IG message';
+  if (v.includes('visit') || v.includes('visita')) return 'Visit';
+  if (v.includes('sample') || v.includes('muestra')) return 'Drop samples';
   return 'Other';
 };
 
@@ -407,6 +571,26 @@ export default function App() {
     }
   };
 
+  const handleUpdateAccountTags = async (clientId: string | number, tags: string[]) => {
+    if (!supabase) return;
+    setIsSaving(true);
+    try {
+      const { error } = await supabase
+        .from('clients')
+        .update({ product_interest_tags: tags })
+        .eq('client_id', clientId);
+      if (error) throw error;
+      setClients(prev => prev.map(c => 
+        String(c.client_id) === String(clientId) ? { ...c, product_interest_tags: tags } : c
+      ));
+    } catch (err: any) {
+      console.error('Error updating tags:', err);
+      alert('Error updating tags: ' + err.message);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const handleLogout = async () => {
     if (!supabase) return;
     await supabase.auth.signOut();
@@ -426,10 +610,13 @@ export default function App() {
   
   // Weekly Priorities window state
   const [weeklyDateRange, setWeeklyDateRange] = useState<string>('Next 7 days');
+  const [weeklyActionTypeFilter, setWeeklyActionTypeFilter] = useState<string>('All actions');
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [newNote, setNewNote] = useState('');
   const [editingClient, setEditingClient] = useState<Client | null>(null);
+  const [editingClientTags, setEditingClientTags] = useState<string[]>([]);
+  const [productTagFilter, setProductTagFilter] = useState<string>('All products');
   const [assignmentFilter, setAssignmentFilter] = useState<'all' | 'assigned' | 'unassigned'>('all');
   const [statusFilter, setStatusFilter] = useState<'All' | 'Potential client' | 'Client' | 'Temporary Discarded'>('Potential client');
   const [taskToAccomplish, setTaskToAccomplish] = useState<PipelineItem | null>(null);
@@ -448,6 +635,16 @@ export default function App() {
   const [commandSellerFilter, setCommandSellerFilter] = useState<User>('All');
   const [timelineTemperature, setTimelineTemperature] = useState<'Active' | 'Warning' | 'Cold'>('Cold');
   const [showDeleteModal, setShowDeleteModal] = useState<string | number | null>(null);
+  const [selectedAccount360, setSelectedAccount360] = useState<Client | null>(null);
+  const [account360Tags, setAccount360Tags] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (selectedAccount360) {
+      setAccount360Tags(selectedAccount360.product_interest_tags || []);
+    } else {
+      setAccount360Tags([]);
+    }
+  }, [selectedAccount360]);
 
   // Wizard estados para asignación
   const [assigningClient, setAssigningClient] = useState<Client | null>(null);
@@ -464,6 +661,7 @@ export default function App() {
     address_line_1: '',
     notes: ''
   });
+  const [newClientTags, setNewClientTags] = useState<string[]>([]);
   const [isScanning, setIsScanning] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -494,6 +692,14 @@ export default function App() {
       setClientHistory([]);
     }
   }, [selectedClientForHistory]);
+
+  useEffect(() => {
+    if (editingClient) {
+      setEditingClientTags(editingClient.product_interest_tags || []);
+    } else {
+      setEditingClientTags([]);
+    }
+  }, [editingClient]);
 
   const parseFlexibleDate = (dateStr: string | undefined | null) => {
     if (!dateStr) return null;
@@ -529,6 +735,33 @@ export default function App() {
 
   const normalizeStatus = (val: string | null | undefined) => String(val || '').trim().toLowerCase();
   const isDone = (status: string | null | undefined) => normalizeStatus(status) === 'done';
+
+  const normalizeSamplesStatus = (val: string | null | undefined) => {
+    const s = String(val || '').trim().toLowerCase();
+    if (['yes', 'y', 'si', 'sí', 'all', 'sent', 'samples sent'].includes(s)) return 'sent';
+    if (['no', 'n', '', 'null', 'undefined', '-'].includes(s)) return 'not_sent_or_unknown';
+    return 'other';
+  };
+
+  const getMainPipelineRecord = (records: PipelineItem[]) => {
+    if (!records || records.length === 0) return null;
+    const activeRecords = records.filter(r => !isDone(r.action_status));
+    if (activeRecords.length > 0) {
+      return [...activeRecords].sort((a, b) => {
+        const dateA = new Date(a.next_action_date || 0).getTime();
+        const dateB = new Date(b.next_action_date || 0).getTime();
+        return dateA - dateB;
+      })[0];
+    }
+    return [...records].sort((a, b) => {
+      const idA = Number(a.id) || 0;
+      const idB = Number(b.id) || 0;
+      if (idB !== idA) return idB - idA;
+      const dateA = new Date(a.created_at || a.last_contact_date || 0).getTime();
+      const dateB = new Date(b.created_at || b.last_contact_date || 0).getTime();
+      return dateB - dateA;
+    })[0];
+  };
 
   const isOverdue = (dateStr: string | null | undefined, actionStatus?: string | null | undefined) => {
     if (isDone(actionStatus)) return false;
@@ -597,6 +830,47 @@ export default function App() {
     return String(item.client_status || item.status || '').trim();
   };
 
+  const logPipelineActivity = async (
+    pipelineId: string | number | null,
+    clientId: string | number,
+    companyName: string,
+    activityType: string,
+    description: string,
+    metadata: any = {}
+  ) => {
+    if (!supabase || !session?.user) return;
+
+    try {
+      const auditEntry = {
+        pipeline_id: pipelineId ? String(pipelineId) : null,
+        client_id: String(clientId),
+        company_name: companyName,
+        user_id: session.user.id,
+        user_email: session.user.email,
+        activity_type: activityType,
+        activity_description: description,
+        metadata: metadata,
+        activity_date: new Date().toISOString()
+      };
+
+      // 1. Insert into activity log (invisible)
+      const { error: logError } = await supabase.from('pipeline_activity_log').insert([auditEntry]);
+      if (logError) console.error("Error logging pipeline activity:", logError);
+
+      // 2. Update pipeline row with user tracking info if pipelineId exists
+      if (pipelineId) {
+        const { error: updateError } = await supabase.from('pipeline').update({
+          user_id: session.user.id,
+          last_user_activity_at: new Date().toISOString()
+        }).eq('id', pipelineId);
+        
+        if (updateError) console.error("Error updating pipeline user activity:", updateError);
+      }
+    } catch (err) {
+      console.error("Critical error in logPipelineActivity:", err);
+    }
+  };
+
   const fetchClients = async () => {
     setLoading(true);
     // Limpiar formulario al cambiar de vista si es necesario, 
@@ -611,6 +885,7 @@ export default function App() {
         address_line_1: '',
         notes: ''
       });
+      setNewClientTags([]);
     }
     
     if (!supabase) {
@@ -665,6 +940,7 @@ export default function App() {
         postal_code: c.postal_code || c['Código postal'] || '',
         notes: c.notes || c.description || c.desc || c.Descripción || c.Descripcion || '',
         client_type: c.client_type || c.client_status || c.status || c.Status || 'Potential client',
+        product_interest_tags: c.product_interest_tags || [],
         created_at: c.created_at
       }));
 
@@ -914,7 +1190,9 @@ export default function App() {
         notes: notes || '',
         next_action_date: entry.next_action_date,
         owner: entry.created_by,
-        action_status: 'Done' // Marcamos como Done para que no cree una nueva tarjeta en el tablero
+        action_status: 'Done', // Marcamos como Done para que no cree una nueva tarjeta en el tablero
+        user_id: session?.user?.id,
+        last_user_activity_at: new Date().toISOString()
       };
 
       // Si tenemos datos del cliente original, los incluimos para mantener integridad
@@ -924,7 +1202,18 @@ export default function App() {
         pipelineEntry.client_status = originalClient.client_type;
       }
 
-      await supabase.from('pipeline').insert([pipelineEntry]);
+      const { data: insertedData, error: insertError } = await supabase.from('pipeline').insert([pipelineEntry]).select();
+      
+      if (!insertError && insertedData && insertedData[0]) {
+        logPipelineActivity(
+          insertedData[0].id,
+          clientId,
+          companyName,
+          'notes_updated',
+          `History entry added: ${last_activity}`,
+          { type, source: 'addHistoryEntry' }
+        );
+      }
       
     } catch (e) {
       console.error("Error saving entry to pipeline:", e);
@@ -968,6 +1257,10 @@ export default function App() {
         dbUpdates.client_type = updates.client_type;
         // Some systems use 'status' or 'client_status', but we'll stick to client_type 
         // as the user confirmed this is the one.
+      }
+
+      if (updates.product_interest_tags !== undefined) {
+        dbUpdates.product_interest_tags = updates.product_interest_tags;
       }
       
       console.log("Supabase Update Attempt Payload:", dbUpdates);
@@ -1066,8 +1359,46 @@ export default function App() {
     }
 
     try {
-      const { error } = await supabase.from('pipeline').update(updates).eq('id', id);
+      const fullUpdates = {
+        ...updates,
+        user_id: session?.user?.id,
+        last_user_activity_at: new Date().toISOString()
+      };
+      
+      const { error } = await supabase.from('pipeline').update(fullUpdates).eq('id', id);
       if (error) throw error;
+
+      // Log the changes
+      if (existingItem) {
+        const company = getClientCompanyName(existingItem.client_id, existingItem.company_name);
+        
+        // Log individual field changes as requested
+        if (updates.status && updates.status !== existingItem.status) {
+          logPipelineActivity(id, existingItem.client_id, company, 'status_changed', `Status changed from ${existingItem.status} to ${updates.status}`, { old: existingItem.status, new: updates.status });
+        }
+        if (updates.priority && updates.priority !== existingItem.priority) {
+          logPipelineActivity(id, existingItem.client_id, company, 'priority_changed', `Priority changed from ${existingItem.priority} to ${updates.priority}`, { old: existingItem.priority, new: updates.priority });
+        }
+        if (updates.owner_id && updates.owner_id !== existingItem.owner_id) {
+          logPipelineActivity(id, existingItem.client_id, company, 'owner_changed', `Owner changed from ${existingItem.owner_id} to ${updates.owner_id}`, { old: existingItem.owner_id, new: updates.owner_id });
+        }
+        if (updates.last_activity && updates.last_activity !== existingItem.last_activity) {
+          logPipelineActivity(id, existingItem.client_id, company, 'last_activity_changed', `Activity changed from ${existingItem.last_activity} to ${updates.last_activity}`, { old: existingItem.last_activity, new: updates.last_activity });
+        }
+        if (updates.next_action_date && updates.next_action_date !== existingItem.next_action_date) {
+          logPipelineActivity(id, existingItem.client_id, company, 'next_action_date_changed', `Next action date changed from ${existingItem.next_action_date} to ${updates.next_action_date}`, { old: existingItem.next_action_date, new: updates.next_action_date });
+        }
+        if (updates.action_status && updates.action_status !== existingItem.action_status) {
+          logPipelineActivity(id, existingItem.client_id, company, 'action_status_changed', `Action status changed from ${existingItem.action_status} to ${updates.action_status}`, { old: existingItem.action_status, new: updates.action_status });
+        }
+        if (updates.samples_sent && updates.samples_sent !== existingItem.samples_sent) {
+          logPipelineActivity(id, existingItem.client_id, company, 'samples_sent_updated', `Samples sent status updated from ${existingItem.samples_sent} to ${updates.samples_sent}`, { old: existingItem.samples_sent, new: updates.samples_sent });
+        }
+        if (updates.notes && updates.notes !== existingItem.notes) {
+          logPipelineActivity(id, existingItem.client_id, company, 'notes_updated', `Pipeline notes updated`, { source: 'handleUpdatePipeline' });
+        }
+      }
+
       fetchClients();
     } catch (err) {
       console.error("Error updating pipeline:", err);
@@ -1127,20 +1458,40 @@ export default function App() {
     try {
       // 1. Marcar la acción actual como 'done'
       const oldCol = cols.find(c => ['action_status', 'action status'].includes(c)) || 'action_status';
+      const updateData: any = { 
+        [oldCol]: 'Done',
+        user_id: session?.user?.id,
+        last_user_activity_at: new Date().toISOString()
+      };
+      
       const { error: updateError } = await supabase
         .from('pipeline')
-        .update({ [oldCol]: 'Done' })
+        .update(updateData)
         .eq('id', item.id);
       
       if (updateError) {
         console.warn("Retrying update mark as done with alternative column names");
         const altCol = oldCol === 'action_status' ? 'action status' : 'action_status';
-        await supabase.from('pipeline').update({ [altCol]: 'Done' }).eq('id', item.id);
+        await supabase.from('pipeline').update(updateData).eq('id', item.id);
       }
 
       // 2. Insertar la nueva acción como 'postpone'
-      const { error: insertError } = await supabase.from('pipeline').insert([payload]);
+      payload.user_id = session?.user?.id;
+      payload.last_user_activity_at = new Date().toISOString();
+      
+      const { data: insertedData, error: insertError } = await supabase.from('pipeline').insert([payload]).select();
       if (insertError) throw insertError;
+      
+      if (insertedData && insertedData[0]) {
+        logPipelineActivity(
+          insertedData[0].id,
+          item.client_id,
+          getClientCompanyName(item.client_id, item.company_name),
+          'action_postponed',
+          `Action postponed until ${formatDateSafe(newDate)}`,
+          { old_date: item.next_action_date, new_date: newDate, reason }
+        );
+      }
       
       addHistoryEntry(item.client_id, 'note', `Acción pospuesta hasta el ${formatDateSafe(newDate)}`, reason);
       setPostponeItem(null);
@@ -1265,11 +1616,18 @@ export default function App() {
     try {
       // 1. Marcar el registro anterior como 'Done'
       const oldCol = cols.find(c => ['action status', 'action_status'].includes(c)) || 'action status';
-      const { error: updateError } = await supabase.from('pipeline').update({ [oldCol]: 'Done' }).eq('id', prevItem.id);
+      const updateData: any = { 
+        [oldCol]: 'Done',
+        user_id: session?.user?.id,
+        last_user_activity_at: new Date().toISOString()
+      };
+      
+      const { error: updateError } = await supabase.from('pipeline').update(updateData).eq('id', prevItem.id);
       if (updateError) console.warn("No se pudo marcar la tarea anterior como Done:", updateError);
 
       // 2. Actualizar el status del cliente en la tabla 'clients'
       if (newStatus) {
+        // ... (existing logic for clients update remains same)
         const clientIdCol = clients.length > 0 && Object.keys(clients[0]).includes('client_id') ? 'client_id' : 'id';
         
         // Determinar el client_type (tipo de cuenta) basado en el nuevo stage
@@ -1291,8 +1649,38 @@ export default function App() {
       }
 
       // 3. Insertar el nuevo registro como 'Pending'
-      const { error } = await supabase.from('pipeline').insert([payload]);
+      payload.user_id = session?.user?.id;
+      payload.last_user_activity_at = new Date().toISOString();
+      
+      const { data: insertedData, error } = await supabase.from('pipeline').insert([payload]).select();
       if (error) throw error;
+      
+      if (insertedData && insertedData[0]) {
+        logPipelineActivity(
+          insertedData[0].id,
+          prevItem.client_id,
+          clientCompany,
+          'action_completed',
+          `Task completed: ${prevItem.last_activity}. Next: ${nextAction}`,
+          { 
+            prev_status: prevItem.status, 
+            new_status: statusForPriority,
+            next_date: nextDate
+          }
+        );
+        
+        // Log status change if happened
+        if (newStatus && newStatus !== prevItem.status) {
+          logPipelineActivity(
+            insertedData[0].id,
+            prevItem.client_id,
+            clientCompany,
+            'status_changed',
+            `Status changed from ${prevItem.status} to ${newStatus}`,
+            { old_status: prevItem.status, new_status: newStatus }
+          );
+        }
+      }
       
       // Guardar log detallado en client_history
       addHistoryEntry(
@@ -1333,7 +1721,9 @@ export default function App() {
         last_activity: updates.last_activity,
         client_status: updates.status,
         priority: priority,
-        notes: finalNotes
+        notes: finalNotes,
+        user_id: session?.user?.id,
+        last_user_activity_at: new Date().toISOString()
       };
 
       if (isClosed) {
@@ -1351,6 +1741,30 @@ export default function App() {
       const { error: pipeError } = await supabase.from('pipeline').update(pipelineUpdates).eq('id', id);
 
       if (pipeError) throw pipeError;
+
+      // Log the edit
+      logPipelineActivity(
+        id,
+        clientId,
+        getClientCompanyName(clientId),
+        'notes_updated',
+        `Manual edit performed. Action: ${updates.last_activity}`,
+        { updates }
+      );
+
+      // Check for specific changes to log
+      const originalItem = pipeline.find(p => String(p.id) === String(id));
+      if (originalItem) {
+        if (originalItem.status !== updates.status) {
+          logPipelineActivity(id, clientId, getClientCompanyName(clientId), 'status_changed', `Status changed from ${originalItem.status} to ${updates.status}`, { old: originalItem.status, new: updates.status });
+        }
+        if (originalItem.priority !== priority) {
+          logPipelineActivity(id, clientId, getClientCompanyName(clientId), 'priority_changed', `Priority changed from ${originalItem.priority} to ${priority}`, { old: originalItem.priority, new: priority });
+        }
+        if (originalItem.last_activity !== updates.last_activity) {
+          logPipelineActivity(id, clientId, getClientCompanyName(clientId), 'last_activity_changed', `Activity changed from ${originalItem.last_activity} to ${updates.last_activity}`, { old: originalItem.last_activity, new: updates.last_activity });
+        }
+      }
 
       addHistoryEntry(clientId, 'note', `Registro editado manualmente. Nuevo status: ${updates.status}, Acción: ${updates.last_activity}, Prioridad: ${priority}`, updates.notes);
       
@@ -1410,8 +1824,22 @@ export default function App() {
     setMapping(['action_status', 'action status'], 'Pending');
 
     try {
-      const { error } = await supabase.from('pipeline').insert([payload]);
+      payload.user_id = session?.user?.id;
+      payload.last_user_activity_at = new Date().toISOString();
+      
+      const { data: insertedData, error } = await supabase.from('pipeline').insert([payload]).select();
       if (error) throw error;
+      
+      if (insertedData && insertedData[0]) {
+        logPipelineActivity(
+          insertedData[0].id,
+          client.client_id,
+          client.company_name,
+          'pipeline_created',
+          `New follow-up started by ${selectedOwner}`,
+          { owner: selectedOwner }
+        );
+      }
       
       addHistoryEntry(client.client_id, 'note', `Seguimiento académico iniciado por ${selectedOwner}`);
       setAssigningClient(null);
@@ -1702,17 +2130,24 @@ export default function App() {
   }, [pipeline, currentUser, searchTerm, statusFilter, sortBy]);
 
   const baseFilteredClients = useMemo(() => {
-    const result = clients.filter(c => 
+    let result = clients.filter(c => 
       (c.company_name?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
       (c.contact_name?.toLowerCase() || '').includes(searchTerm.toLowerCase()) ||
       (c.email?.toLowerCase() || '').includes(searchTerm.toLowerCase())
     );
 
     if (statusFilter !== 'All') {
-      return result.filter(c => c.client_type === statusFilter);
+      result = result.filter(c => c.client_type === statusFilter);
     }
+
+    if (productTagFilter !== 'All products') {
+      result = result.filter(c => 
+        c.product_interest_tags && c.product_interest_tags.includes(productTagFilter)
+      );
+    }
+
     return result;
-  }, [clients, searchTerm, statusFilter]);
+  }, [clients, searchTerm, statusFilter, productTagFilter]);
 
   const assignedInBase = useMemo(() => {
     return baseFilteredClients.filter(c => assignedClientIds.has(String(c.client_id || (c as any).id)));
@@ -2049,158 +2484,167 @@ export default function App() {
       {/* WIZARD DE ASIGNACIÓN DE SEGUIMIENTO */}
       <AnimatePresence>
         {assigningClient && (
-          <div key="assign-modal-overlay" className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
-              <motion.div 
-                key="assign-modal-content"
-                initial={{ scale: 0.9, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                exit={{ scale: 0.9, opacity: 0 }}
-                className="bg-white rounded-t-3xl md:rounded-3xl max-w-md w-full overflow-hidden shadow-2xl h-[70vh] md:h-auto flex flex-col mt-auto md:mt-0"
-              >
-              <div className="p-8">
-                {!showAssignConfirm ? (
-                  <>
-                    <div className="w-16 h-16 bg-orbe-green/10 rounded-2xl flex items-center justify-center text-orbe-green mb-6 mx-auto">
-                      <Briefcase size={32} />
-                    </div>
-                    <h3 className="text-2xl font-black text-orbe-green text-center mb-2 leading-tight">MÓDULO DE ASIGNACIÓN</h3>
-                    <p className="text-gray-400 text-sm text-center mb-8 font-medium">¿Quién es el responsable de esta cuenta?<br/><span className="text-orbe-green font-bold">{assigningClient.company_name}</span></p>
-                    
-                    <div className="grid grid-cols-2 gap-4 mb-8">
-                      {['Alejandro', 'Juanjo'].map(name => (
-                        <button
-                          key={name}
-                          onClick={() => {
-                            setAssigningOwner(name as any);
-                            setShowAssignConfirm(true);
-                          }}
-                          className={`p-6 rounded-2xl border-2 transition-all group flex flex-col items-center gap-3 ${
-                            assigningOwner === name 
-                            ? 'border-orbe-green bg-orbe-green text-white shadow-lg shadow-orbe-green/20' 
-                            : 'border-orbe-tan/30 hover:border-orbe-green/50 text-orbe-green bg-gray-50'
-                          }`}
-                        >
-                          <div className={`w-10 h-10 rounded-full flex items-center justify-center text-lg font-black ${assigningOwner === name ? 'bg-white text-orbe-green' : 'bg-orbe-green/10 text-orbe-green'}`}>
-                            {(name || '?')[0]}
-                          </div>
-                          <span className="font-bold text-sm tracking-tight">{name.toUpperCase()}</span>
-                        </button>
-                      ))}
-                    </div>
+          <OrbeModal
+            isOpen={!!assigningClient}
+            onClose={() => setAssigningClient(null)}
+            title="Account Assignment"
+            subtitle={assigningClient.company_name}
+            icon={<Briefcase size={20} />}
+            variant="default"
+            modalKey="assign-modal"
+          >
+            <div className="space-y-6">
+              {!showAssignConfirm ? (
+                <>
+                  <div className="bg-orbe-cream/30 p-6 rounded-2xl border border-orbe-tan/20 flex flex-col items-center text-center">
+                    <p className="text-gray-500 text-sm font-medium">Select the team member responsible for managing this account:</p>
+                    <p className="text-orbe-green font-black text-lg mt-1 truncate w-full">{assigningClient.company_name}</p>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-4">
+                    {['Alejandro', 'Juanjo'].map(name => (
+                      <button
+                        key={name}
+                        onClick={() => {
+                          setAssigningOwner(name as any);
+                          setShowAssignConfirm(true);
+                        }}
+                        className={`p-6 rounded-2xl border-2 transition-all group flex flex-col items-center gap-3 ${
+                          assigningOwner === name 
+                          ? 'border-orbe-green bg-orbe-green text-white shadow-lg shadow-orbe-green/10' 
+                          : 'border-orbe-tan/30 hover:border-orbe-green/50 text-orbe-green bg-gray-50'
+                        }`}
+                      >
+                        <div className={`w-10 h-10 rounded-full flex items-center justify-center text-lg font-black ${assigningOwner === name ? 'bg-white text-orbe-green' : 'bg-orbe-green/10 text-orbe-green'}`}>
+                          {(name || '?')[0]}
+                        </div>
+                        <span className="font-bold text-sm tracking-tight">{name.toUpperCase()}</span>
+                      </button>
+                    ))}
+                  </div>
 
-                    <button 
-                      onClick={() => setAssigningClient(null)}
-                      className="w-full py-4 text-gray-400 font-bold hover:text-gray-600 transition-colors uppercase text-xs tracking-widest"
-                    >
-                      Cancelar proceso
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <div className="w-16 h-16 bg-orange-50 rounded-2xl flex items-center justify-center text-orange-500 mb-6 mx-auto">
-                      <AlertCircle size={32} />
-                    </div>
-                    <h3 className="text-2xl font-black text-orbe-green text-center mb-2 leading-tight">CONFIRMACIÓN REQUERIDA</h3>
-                    <p className="text-gray-500 text-center mb-10 font-medium">
-                      ¿Seguro que quieres asignar esta cuenta a <span className="text-orbe-green font-black">{assigningOwner}</span>?
+                  <button 
+                    onClick={() => setAssigningClient(null)}
+                    className="w-full py-4 text-gray-400 font-bold hover:text-gray-600 transition-colors uppercase text-[10px] tracking-widest border border-transparent hover:border-gray-200 rounded-xl"
+                  >
+                    Cancel assignment
+                  </button>
+                </>
+              ) : (
+                <div className="space-y-8 py-4">
+                  <div className="w-16 h-16 bg-amber-50 rounded-2xl flex items-center justify-center text-amber-500 mx-auto border border-amber-100 italic">
+                    <AlertCircle size={32} />
+                  </div>
+                  <div className="text-center">
+                    <h3 className="text-xl font-black text-orbe-green uppercase tracking-tight">Confirm Assignment</h3>
+                    <p className="text-gray-500 mt-2 font-medium">
+                      Are you sure you want to assign this account to <span className="text-orbe-green font-black">{assigningOwner}</span>?
                     </p>
-                    
-                    <div className="flex gap-4">
-                      <button
-                        onClick={() => handleStartFollowup(assigningClient, assigningOwner)}
-                        className="flex-1 bg-orbe-green text-white py-4 rounded-xl font-bold shadow-lg shadow-orbe-green/20 hover:scale-[1.02] active:scale-[0.98] transition-all uppercase text-sm tracking-widest"
-                      >
-                        Sí, Asignar
-                      </button>
-                      <button
-                        onClick={() => setShowAssignConfirm(false)}
-                        className="flex-1 border-2 border-orbe-tan/30 text-gray-400 py-4 rounded-xl font-bold hover:bg-gray-50 transition-all uppercase text-sm tracking-widest"
-                      >
-                        No
-                      </button>
-                    </div>
-                  </>
-                )}
-              </div>
-            </motion.div>
-          </div>
+                  </div>
+                  
+                  <div className="flex flex-col gap-3">
+                    <button
+                      onClick={() => handleStartFollowup(assigningClient, assigningOwner)}
+                      className="w-full bg-orbe-green text-white py-4 rounded-xl font-bold shadow-lg shadow-orbe-green/20 hover:scale-[1.02] active:scale-[0.98] transition-all uppercase text-[11px] tracking-widest"
+                    >
+                      Yes, Assign Now
+                    </button>
+                    <button
+                      onClick={() => setShowAssignConfirm(false)}
+                      className="w-full border-2 border-orbe-tan/30 text-gray-400 py-4 rounded-xl font-bold hover:bg-gray-50 transition-all uppercase text-[11px] tracking-widest"
+                    >
+                      No, go back
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </OrbeModal>
         )}
       </AnimatePresence>
+
 
       {/* MODAL DE CONFIGURACIÓN DE SUPABASE */}
       <AnimatePresence>
         {showConfigWizard && (
-          <div key="config-wizard-overlay" className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-6">
-            <motion.div 
-              key="config-wizard-modal"
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-white rounded-3xl w-full max-w-xl shadow-2xl overflow-hidden"
-            >
-              <div className="bg-orbe-green p-8 text-white">
-                <h3 className="text-2xl font-bold flex items-center gap-3">
-                  <Database className="w-6 h-6" /> Asistente de Configuración
-                </h3>
-                <p className="text-white/60 text-sm mt-1">Configura la conexión con tu base de datos de Supabase</p>
-              </div>
-              
-              <div className="p-8 space-y-6">
-                <div>
-                  <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Project URL</label>
-                  <input 
-                    type="text" 
-                    value={wizardConfig.url} 
-                    onChange={e => setWizardConfig({...wizardConfig, url: e.target.value})}
-                    placeholder="https://su-proyecto.supabase.co"
-                    className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm focus:border-orbe-green focus:ring-1 focus:ring-orbe-green outline-none"
-                  />
-                  <p className="text-[10px] text-gray-400 mt-1 italic">Copia esto de Settings → API → Project URL</p>
-                </div>
-
-                <div>
-                  <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-2">Anon Public Key</label>
-                  <textarea 
-                    rows={3}
-                    value={wizardConfig.key} 
-                    onChange={e => setWizardConfig({...wizardConfig, key: e.target.value})}
-                    placeholder="eyJhbGciOiJIUzI1NiIsInR5..."
-                    className="w-full bg-gray-50 border border-gray-200 rounded-xl px-4 py-3 text-sm focus:border-orbe-green focus:ring-1 focus:ring-orbe-green outline-none font-mono resize-none"
-                  />
-                  <p className="text-[10px] text-gray-400 mt-1 italic">Copia esto de Settings → API → `anon` public key</p>
-                </div>
-
-                <div className="flex gap-4 pt-4">
-                  <button 
-                    onClick={() => {
-                      localStorage.setItem('ORBE_SUPABASE_URL', wizardConfig.url);
-                      localStorage.setItem('ORBE_SUPABASE_KEY', wizardConfig.key);
-                      window.location.reload();
-                    }}
-                    className="flex-1 bg-orbe-green text-white py-3 rounded-xl font-bold text-sm shadow-lg shadow-orbe-green/20 hover:scale-[1.02] active:scale-[0.98] transition-all"
-                  >
-                    Guardar y Conectar
-                  </button>
+          <OrbeModal
+            isOpen={!!showConfigWizard}
+            onClose={() => setShowConfigWizard(false)}
+            title="Database Configuration"
+            subtitle="Secure your connection to Supabase"
+            icon={<Database size={20} />}
+            modalKey="config-wizard-modal"
+            footer={
+              <div className="flex flex-col gap-3">
+                <button 
+                  onClick={() => {
+                    localStorage.setItem('ORBE_SUPABASE_URL', wizardConfig.url);
+                    localStorage.setItem('ORBE_SUPABASE_KEY', wizardConfig.key);
+                    window.location.reload();
+                  }}
+                  className="w-full bg-orbe-green text-white py-4 rounded-xl font-black text-[10px] uppercase tracking-[0.2em] shadow-lg shadow-orbe-green/20 hover:scale-[1.02] active:scale-[0.98] transition-all"
+                >
+                  Save and Establish Connection
+                </button>
+                <div className="flex gap-3">
                   <button 
                     onClick={() => {
                       localStorage.removeItem('ORBE_SUPABASE_URL');
                       localStorage.removeItem('ORBE_SUPABASE_KEY');
                       window.location.reload();
                     }}
-                    className="px-6 border border-gray-200 text-gray-400 py-3 rounded-xl font-bold text-sm hover:bg-gray-50 transition-all"
+                    className="flex-1 border border-orbe-tan/30 text-gray-400 py-3 rounded-xl font-black text-[9px] uppercase tracking-widest hover:bg-gray-50 transition-all"
                   >
-                    Resetear
+                    Reset Connection
                   </button>
                   <button 
                     onClick={() => setShowConfigWizard(false)}
-                    className="px-4 text-gray-400 hover:text-gray-600 font-bold"
+                    className="flex-1 bg-gray-50 text-gray-500 py-3 rounded-xl font-black text-[9px] uppercase tracking-widest hover:bg-gray-100 transition-all"
                   >
-                    Cancelar
+                    Close Settings
                   </button>
                 </div>
               </div>
-            </motion.div>
-          </div>
+            }
+          >
+            <div className="space-y-6">
+              <div className="bg-orbe-cream/50 p-4 rounded-2xl border border-orbe-tan/20 flex items-start gap-4">
+                <div className="p-3 bg-white rounded-xl text-orbe-green shadow-sm">
+                  <ShieldCheck size={24} />
+                </div>
+                <div>
+                  <h4 className="text-[10px] font-black text-orbe-green uppercase tracking-widest leading-none mb-1">Security Protocol</h4>
+                  <p className="text-[11px] text-gray-500 italic">Enter the unique credentials from your Supabase Dashboard to enable cloud synchronization.</p>
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-[9px] font-black text-gray-400 uppercase tracking-widest mb-2 px-1">Project Interface URL</label>
+                  <input 
+                    type="text" 
+                    value={wizardConfig.url} 
+                    onChange={e => setWizardConfig({...wizardConfig, url: e.target.value})}
+                    placeholder="https://su-proyecto.supabase.co"
+                    className="w-full bg-white border border-orbe-tan/30 rounded-xl px-4 py-4 text-sm focus:ring-4 ring-orbe-green/5 outline-none transition-all placeholder:text-gray-300 font-medium"
+                  />
+                  <p className="text-[8px] text-orbe-green/40 mt-2 px-1 font-bold italic">PATH: Settings → API → Project URL</p>
+                </div>
+
+                <div>
+                  <label className="block text-[9px] font-black text-gray-400 uppercase tracking-widest mb-2 px-1">Public Access Token (AnonKey)</label>
+                  <textarea 
+                    rows={4}
+                    value={wizardConfig.key} 
+                    onChange={e => setWizardConfig({...wizardConfig, key: e.target.value})}
+                    placeholder="eyJhbGciOiJIUzI1NiIsInR5..."
+                    className="w-full bg-white border border-orbe-tan/30 rounded-xl px-4 py-4 text-sm focus:ring-4 ring-orbe-green/5 outline-none font-mono resize-none transition-all placeholder:text-gray-300"
+                  />
+                  <p className="text-[8px] text-orbe-green/40 mt-2 px-1 font-bold italic">PATH: Settings → API → `anon` public key</p>
+                </div>
+              </div>
+            </div>
+          </OrbeModal>
         )}
       </AnimatePresence>
 
@@ -2319,7 +2763,8 @@ export default function App() {
                       mobile: newClientForm.mobile || '',
                       address_line_1: newClientForm.address_line_1 || '',
                       notes: newClientForm.notes || '',
-                      client_type: 'Potential client'
+                      client_type: 'Potential client',
+                      product_interest_tags: newClientTags
                     };
 
                     if (!supabase) {
@@ -2404,6 +2849,39 @@ export default function App() {
                           className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-lg focus:ring-2 ring-orbe-green/10 outline-none transition-all" 
                           placeholder="Contact reference or name..." 
                         />
+                      </div>
+
+                      {/* Product Opportunity Tags Section */}
+                      <div className="col-span-2 space-y-4 pt-4 border-t border-orbe-tan/20">
+                        <div className="flex items-center gap-2">
+                          <Zap size={14} className="text-amber-500" />
+                          <h4 className="text-[10px] font-black text-orbe-green uppercase tracking-[0.2em]">Product Opportunity Tags</h4>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {PRODUCT_INTEREST_TAGS.map(tag => {
+                            const isSelected = newClientTags.includes(tag);
+                            return (
+                              <button
+                                type="button"
+                                key={tag}
+                                onClick={() => {
+                                  if (isSelected) {
+                                    setNewClientTags(newClientTags.filter(t => t !== tag));
+                                  } else {
+                                    setNewClientTags([...newClientTags, tag]);
+                                  }
+                                }}
+                                className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-tight transition-all border ${
+                                  isSelected 
+                                    ? 'bg-orbe-green text-white border-orbe-green shadow-sm scale-105' 
+                                    : 'bg-white text-orbe-green/40 border-orbe-tan/20 hover:border-orbe-green/30 hover:text-orbe-green'
+                                }`}
+                              >
+                                {getProductTagLabel(tag)}
+                              </button>
+                            );
+                          })}
+                        </div>
                       </div>
                       <div>
                         <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Corporate Email</label>
@@ -2571,7 +3049,17 @@ export default function App() {
                         userPipeline.map((item, index) => (
                           <tr key={getPipelineKey(item, 'pipeline-row', index)} className="hover:bg-orbe-cream/30 transition-colors">
                             <td className="px-3 py-2">
-                              <div className="font-bold text-orbe-green">{item.company_name}</div>
+                              <div className="flex flex-col">
+                                <div className="flex items-center gap-2">
+                                  <div className="font-bold text-orbe-green">{item.company_name}</div>
+                                </div>
+                                <div className="mt-1">
+                                  {(() => {
+                                    const relatedClient = clients.find(c => String(c.client_id) === String(item.client_id));
+                                    return renderProductTags(relatedClient?.product_interest_tags, 2);
+                                  })()}
+                                </div>
+                              </div>
                             </td>
                             <td className="px-3 py-2">
                               <div className="flex items-center gap-2">
@@ -2716,6 +3204,12 @@ export default function App() {
                             <div className="flex justify-between items-start">
                               <div>
                                 <h4 className="font-black text-orbe-green text-lg leading-tight uppercase tracking-tight">{item.company_name}</h4>
+                                <div className="mt-1">
+                                  {(() => {
+                                    const relatedClient = clients.find(c => String(c.client_id) === String(item.client_id));
+                                    return renderProductTags(relatedClient?.product_interest_tags, 2);
+                                  })()}
+                                </div>
                                 <div className="flex items-center gap-2 mt-1 text-gray-400 text-[10px] uppercase font-bold tracking-widest">
                                   <UserCircle size={10} /> {item.owner_id || (item as any).owner || 'Unassigned'} | #{item.client_id}
                                 </div>
@@ -3344,7 +3838,9 @@ export default function App() {
                                 return (
                                   <tr key={`timeline-full-${item.id}`} className="hover:bg-orbe-cream/20 transition-all group">
                                     <td className="p-4">
-                                      <div className="font-black text-orbe-green text-[13px] group-hover:translate-x-1 transition-transform">{item.company_name}</div>
+                                      <div className="flex items-center gap-2 group">
+                                        <div className="font-black text-orbe-green text-[13px] group-hover:translate-x-1 transition-transform">{item.company_name}</div>
+                                      </div>
                                       <div className="text-[10px] text-gray-400 truncate max-w-[200px] mt-0.5 italic">"{item.last_activity}"</div>
                                     </td>
                                     <td className="p-4">
@@ -3456,6 +3952,24 @@ export default function App() {
                             </button>
                           ))}
                         </div>
+
+                        {/* Action Type Filter */}
+                        <div className="relative group/filter">
+                          <select 
+                            value={weeklyActionTypeFilter}
+                            onChange={(e) => setWeeklyActionTypeFilter(e.target.value)}
+                            className="appearance-none bg-gray-100 border-none rounded-xl px-4 py-2 text-[9px] font-black uppercase tracking-tight text-orbe-green focus:ring-2 focus:ring-orbe-green/20 outline-none cursor-pointer pr-8 w-full md:w-auto"
+                          >
+                            <option value="All actions">All actions</option>
+                            {PREDEFINED_ACTIONS.map(action => (
+                              <option key={action} value={action}>{action}</option>
+                            ))}
+                            <option value="Other">Other</option>
+                          </select>
+                          <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-orbe-green/40">
+                            <Filter size={10} />
+                          </div>
+                        </div>
                       </div>
                     </div>
 
@@ -3463,12 +3977,24 @@ export default function App() {
                       const today = getToday();
                       const rollingDays = weeklyDateRange === 'Next 30 days' ? 30 : weeklyDateRange === 'Next 14 days' ? 14 : 7;
                       
-                      const filteredPipeline = pipeline.filter(p => {
+                      const clientMap = new Map<string, PipelineItem>();
+                      pipeline.forEach(p => {
                         const matchesSeller = commandSellerFilter === 'All' || p.owner_id === commandSellerFilter;
                         const isNotDone = !isDone(p.action_status);
                         const isOperational = !isClosedPipelineStage(getEffectivePipelineStage(p));
-                        return matchesSeller && isNotDone && isOperational;
+                        
+                        if (matchesSeller && isNotDone && isOperational) {
+                          const cid = String(p.client_id);
+                          const currentD = parseFlexibleDate(p.next_action_date)?.getTime() || 0;
+                          const existing = clientMap.get(cid);
+                          const existingD = existing ? (parseFlexibleDate(existing.next_action_date)?.getTime() || 0) : Infinity;
+                          
+                          if (!clientMap.has(cid) || currentD < existingD) {
+                            clientMap.set(cid, p);
+                          }
+                        }
                       });
+                      const filteredPipeline = Array.from(clientMap.values());
 
                       const overdueItems = filteredPipeline.filter(p => isOverdue(p.next_action_date, p.action_status))
                         .sort((a,b) => {
@@ -3528,7 +4054,11 @@ export default function App() {
                                         const daysOverdue = d ? Math.floor((today.getTime() - d.getTime()) / (1000 * 3600 * 24)) : 0;
                                         return (
                                           <tr key={getPipelineKey(item, 'overdue-row', index)} className="hover:bg-red-50/30 transition-colors">
-                                            <td className="p-3 font-bold text-orbe-green">{item.company_name}</td>
+                                            <td className="p-3">
+                                              <div className="flex items-center gap-2 group">
+                                                <div className="font-bold text-orbe-green">{item.company_name}</div>
+                                              </div>
+                                            </td>
                                             <td className="p-3">
                                                <span className="px-2 py-0.5 bg-gray-100 rounded text-[8px] font-black uppercase">{item.owner_id || (item as any).owner || 'Unassigned'}</span>
                                             </td>
@@ -3654,8 +4184,16 @@ export default function App() {
                                 const dayDate = targetDate.toLocaleDateString('en-US', { day: '2-digit', month: 'short' });
                                 
                                 const dayItems = filteredPipeline.filter(p => {
-                                  return (isDueToday(p.next_action_date, p.action_status) && i === 0) || 
+                                  const matchesDate = (isDueToday(p.next_action_date, p.action_status) && i === 0) || 
                                          (parseFlexibleDate(p.next_action_date)?.toLocaleDateString() === targetDate.toLocaleDateString());
+                                  
+                                  if (!matchesDate) return false;
+                                  
+                                  if (weeklyActionTypeFilter !== 'All actions') {
+                                    return normalizeActionType(p.last_activity) === weeklyActionTypeFilter;
+                                  }
+                                  
+                                  return true;
                                 }).sort((a,b) => (PRIORITIES[a.priority as Priority] || 99) - (PRIORITIES[b.priority as Priority] || 99));
 
                                 return (
@@ -3667,13 +4205,17 @@ export default function App() {
                                     <div className="p-2 space-y-2 flex-1 overflow-y-auto max-h-[400px] custom-scrollbar">
                                       {dayItems.length === 0 ? (
                                         <div className="h-full flex items-center justify-center p-4">
-                                          <p className="text-[9px] font-bold text-gray-300 uppercase tracking-widest text-center italic">Rest or Prepare</p>
+                                          <p className="text-[9px] font-bold text-gray-300 uppercase tracking-widest text-center italic">
+                                            {weeklyActionTypeFilter !== 'All actions' ? 'No actions of this type in the selected window.' : 'Rest or Prepare'}
+                                          </p>
                                         </div>
                                       ) : (
                                         dayItems.map((item, index) => (
                                           <div key={getPipelineKey(item, 'weekly-day-item', index)} className="p-2 bg-gray-50 border border-gray-100 rounded-xl hover:bg-orbe-cream/30 transition-all group relative">
                                             <div className={`absolute left-0 top-2 bottom-2 w-1 rounded-full ${item.priority === 'Urgent' ? 'bg-red-500' : item.priority === 'High' ? 'bg-orange-500' : 'bg-blue-400'}`} />
-                                            <p className="text-[10px] font-black text-orbe-green leading-tight truncate pl-2">{item.company_name}</p>
+                                            <div className="flex items-center justify-between pl-2">
+                                              <p className="text-[10px] font-black text-orbe-green leading-tight truncate">{item.company_name}</p>
+                                            </div>
                                             <p className="text-[9px] text-gray-500 italic mt-1 pl-2 truncate">{item.last_activity}</p>
                                             <div className="mt-2 flex items-center justify-between pl-2">
                                               <span className="text-[8px] font-black uppercase text-gray-400">{item.owner_id}</span>
@@ -3700,7 +4242,14 @@ export default function App() {
                                 targetDate.setDate(targetDate.getDate() + i);
                                 const dayName = i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : targetDate.toLocaleDateString('en-US', { weekday: 'long' });
                                 const dayDate = targetDate.toLocaleDateString('en-US', { day: '2-digit', month: 'short' });
-                                const dayItems = filteredPipeline.filter(p => (isDueToday(p.next_action_date, p.action_status) && i === 0) || (parseFlexibleDate(p.next_action_date)?.toLocaleDateString() === targetDate.toLocaleDateString()));
+                                const dayItems = filteredPipeline.filter(p => {
+                                  const matchesDate = (isDueToday(p.next_action_date, p.action_status) && i === 0) || (parseFlexibleDate(p.next_action_date)?.toLocaleDateString() === targetDate.toLocaleDateString());
+                                  if (!matchesDate) return false;
+                                  if (weeklyActionTypeFilter !== 'All actions') {
+                                    return normalizeActionType(p.last_activity) === weeklyActionTypeFilter;
+                                  }
+                                  return true;
+                                });
                                 if (dayItems.length === 0 && i !== 0) return null;
                                 return (
                                   <div key={safeKey('weekly-mobile-day', dayName, i)} className="space-y-2">
@@ -3712,7 +4261,9 @@ export default function App() {
                                     <div className="space-y-3">
                                       {dayItems.length === 0 ? (
                                         <div className="p-4 bg-gray-50 rounded-2xl border border-dashed border-gray-200 text-center">
-                                          <p className="text-[10px] text-gray-300 font-bold uppercase tracking-widest italic">No actions scheduled</p>
+                                          <p className="text-[10px] text-gray-300 font-bold uppercase tracking-widest italic">
+                                            {weeklyActionTypeFilter !== 'All actions' ? 'No actions of this type in the selected window.' : 'No actions scheduled'}
+                                          </p>
                                         </div>
                                       ) : (
                                         dayItems.map((item, index) => (
@@ -3942,15 +4493,30 @@ export default function App() {
                             <tr key={getClientKey(c, 'db-row', idx)} className="hover:bg-orbe-cream/30 transition-colors group">
                               <td className="p-5 font-mono text-xs text-gray-400">#{c.client_id || c.id || idx}</td>
                               <td className="p-5 font-bold text-orbe-green">
-                                <div className="flex flex-col">
-                                  <span>{c.company_name}</span>
-                                  <span className={`text-[8px] uppercase tracking-tighter w-fit px-1 rounded border ${
-                                    c.client_type === 'Client' ? 'bg-green-50 text-green-700 border-green-100' : 
-                                    (c.client_type === 'Not interested' || c.client_type === 'Temporary Discarded' || c.client_type === 'Fail') ? 'bg-red-50 text-red-700 border-red-100' :
-                                    'bg-gray-50 text-orbe-green border-orbe-tan'
-                                  }`}>
-                                    {c.client_type}
-                                  </span>
+                                <div className="flex flex-col gap-1">
+                                  <div className="flex items-center gap-2">
+                                    <span>{c.company_name}</span>
+                                    <button 
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setSelectedAccount360(c);
+                                      }}
+                                      className="p-1.5 hover:bg-blue-50 rounded-lg text-blue-600 transition-all border border-blue-100 bg-blue-50/30 cursor-pointer"
+                                      title="Open Account 360º"
+                                    >
+                                      <LayoutDashboard size={14} />
+                                    </button>
+                                  </div>
+                                  <div className="flex flex-wrap gap-1">
+                                    <span className={`text-[8px] uppercase tracking-tighter w-fit px-1 rounded border ${
+                                      c.client_type === 'Client' ? 'bg-green-50 text-green-700 border-green-100' : 
+                                      (c.client_type === 'Not interested' || c.client_type === 'Temporary Discarded' || c.client_type === 'Fail') ? 'bg-red-50 text-red-700 border-red-100' :
+                                      'bg-gray-50 text-orbe-green border-orbe-tan'
+                                    }`}>
+                                      {c.client_type}
+                                    </span>
+                                    {renderProductTags(c.product_interest_tags)}
+                                  </div>
                                 </div>
                               </td>
                               <td className="p-5 text-center">
@@ -4089,6 +4655,10 @@ export default function App() {
                                 </div>
                               </div>
 
+                              <div className="mt-2">
+                                {renderProductTags(c.product_interest_tags, 5)}
+                              </div>
+
                               {c.notes && (
                                 <div className="mt-3 p-3 bg-blue-50/30 rounded-xl border border-blue-100/50">
                                   <div className="flex items-center gap-2 mb-1">
@@ -4099,15 +4669,22 @@ export default function App() {
                                 </div>
                               )}
 
-                              <div className="mt-3 grid grid-cols-2 gap-2">
-                                <a href={`mailto:${c.email}`} className="bg-gray-50 py-2 px-3 rounded-lg border border-orbe-tan/20 flex items-center justify-center gap-2 group active:bg-orbe-tan/10 transition-colors">
-                                  <Mail size={14} className="text-orbe-tan group-active:text-orbe-green transition-colors" />
-                                  <span className="text-[9px] font-black text-orbe-green/70 uppercase tracking-widest">Email</span>
+                              <div className="mt-3 grid grid-cols-3 gap-2">
+                                <a href={`mailto:${c.email}`} className="bg-gray-50 py-2 px-1 rounded-lg border border-orbe-tan/20 flex items-center justify-center gap-1 group active:bg-orbe-tan/10 transition-colors">
+                                  <Mail size={12} className="text-orbe-tan group-active:text-orbe-green transition-colors" />
+                                  <span className="text-[8px] font-black text-orbe-green/70 uppercase tracking-widest">Email</span>
                                 </a>
-                                <a href={`tel:${c.mobile || c.phone}`} className="bg-gray-50 py-2 px-3 rounded-lg border border-orbe-tan/20 flex items-center justify-center gap-2 group active:bg-orbe-tan/10 transition-colors">
-                                  <PhoneCall size={14} className="text-orbe-tan group-active:text-orbe-green transition-colors" />
-                                  <span className="text-[9px] font-black text-orbe-green/70 uppercase tracking-widest">Call</span>
+                                <a href={`tel:${c.mobile || c.phone}`} className="bg-gray-50 py-2 px-1 rounded-lg border border-orbe-tan/20 flex items-center justify-center gap-1 group active:bg-orbe-tan/10 transition-colors">
+                                  <PhoneCall size={12} className="text-orbe-tan group-active:text-orbe-green transition-colors" />
+                                  <span className="text-[8px] font-black text-orbe-green/70 uppercase tracking-widest">Call</span>
                                 </a>
+                                <button 
+                                  onClick={() => setSelectedAccount360(c)}
+                                  className="bg-blue-50 py-2 px-1 rounded-lg border border-blue-100 flex items-center justify-center gap-1 group active:bg-blue-100 transition-colors"
+                                >
+                                  <LayoutDashboard size={12} className="text-blue-500" />
+                                  <span className="text-[8px] font-black text-blue-600 uppercase tracking-widest">360º</span>
+                                </button>
                               </div>
                             </div>
                             <div className="bg-orbe-cream/20 px-4 py-3 border-t border-orbe-tan/20 flex justify-between items-center">
@@ -4156,702 +4733,688 @@ export default function App() {
           {/* OVERVIEW DETAIL DRAWER */}
           <AnimatePresence>
             {selectedDetail && (
-              <div className="fixed inset-0 z-50 flex justify-end">
-                <motion.div 
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  onClick={() => setSelectedDetail(null)}
-                  className="absolute inset-0 bg-black/40 backdrop-blur-sm"
-                />
-                <motion.div 
-                  initial={{ x: '100%' }}
-                  animate={{ x: 0 }}
-                  exit={{ x: '100%' }}
-                  transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-                  className="relative w-full md:max-w-2xl bg-[#F5F5ED] shadow-2xl flex flex-col h-full border-l border-orbe-tan/30"
-                >
-                  <div className="p-6 border-b border-orbe-tan/30 flex justify-between items-center bg-white sticky top-0 z-30">
-                    <div>
-                      <h4 className="text-sm font-black text-orbe-green uppercase tracking-widest">{selectedDetail.label}</h4>
-                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">Listing unique clients • {selectedDetail.items.length} current status</p>
-                    </div>
-                    <button 
-                      onClick={() => setSelectedDetail(null)}
-                      className="w-10 h-10 rounded-full bg-gray-50 flex items-center justify-center text-gray-400 hover:bg-red-50 hover:text-red-500 transition-all shadow-sm"
-                    >
-                      <XCircle size={20} />
-                    </button>
-                  </div>
-
-                  <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4 pb-32">
-                    {selectedDetail.items.length > 0 ? (
-                      selectedDetail.items.map((item, idx) => {
-                        // Normalize item: it might be the unified view item or a raw client/record
-                        const client = item.client || (item.client_id ? item : null);
-                        const mainP = item.principal || (item.id ? item : null);
-                        
-                        // Safety fallback for companies found via search or other sources
-                        const companyName = client?.company_name || mainP?.company_name || 'Unknown Company';
-                        
-                        return (
-                          <div 
-                            key={safeKey('detail-row', companyName, idx)}
-                            className="bg-white rounded-2xl border border-orbe-tan/20 shadow-sm overflow-hidden flex flex-col hover:border-orbe-green/30 transition-all"
-                          >
-                            <div className="p-4 border-b border-orbe-tan/10 bg-gray-50/30 flex justify-between items-center">
-                              <div>
-                                <h5 className="font-black text-orbe-green uppercase text-xs truncate">{companyName}</h5>
-                                <p className="text-[8px] font-bold text-gray-400 uppercase tracking-widest mt-0.5">Client ID: {client?.client_id || item.client_id || 'N/A'}</p>
-                              </div>
-                              <span className="px-2 py-0.5 bg-orbe-green/5 text-orbe-green text-[8px] font-black rounded-lg uppercase border border-orbe-tan/10">
-                                {client?.client_type || item.client_type || 'Potential'}
-                              </span>
+              <OrbeModal
+                isOpen={!!selectedDetail}
+                onClose={() => setSelectedDetail(null)}
+                title={selectedDetail.label}
+                subtitle={`Listing unique clients • ${selectedDetail.items.length} current status`}
+                icon={<Database size={20} />}
+                modalKey="overview-detail-modal"
+                size="xl"
+                footer={
+                  <button 
+                    onClick={() => setSelectedDetail(null)}
+                    className="w-full py-4 bg-orbe-green text-white font-black uppercase tracking-widest rounded-2xl shadow-lg shadow-orbe-green/20 active:scale-[0.98] transition-all"
+                  >
+                    Close Overview
+                  </button>
+                }
+              >
+                <div className="space-y-4">
+                  {selectedDetail.items.length > 0 ? (
+                    selectedDetail.items.map((item, idx) => {
+                      const client = item.client || (item.client_id ? item : null);
+                      const mainP = item.principal || (item.id ? item : null);
+                      const companyName = client?.company_name || mainP?.company_name || 'Unknown Company';
+                      
+                      return (
+                        <div 
+                          key={safeKey('detail-row', companyName, idx)}
+                          className="bg-white rounded-2xl border border-orbe-tan/20 shadow-sm overflow-hidden flex flex-col hover:border-orbe-green/30 transition-all"
+                        >
+                          <div className="p-4 border-b border-orbe-tan/10 bg-gray-50/30 flex justify-between items-center">
+                            <div>
+                              <h5 className="font-black text-orbe-green uppercase text-xs truncate">{companyName}</h5>
+                              <p className="text-[8px] font-bold text-gray-400 uppercase tracking-widest mt-0.5">ID: {client?.client_id || item.client_id || 'N/A'}</p>
                             </div>
-                            <div className="p-4 grid grid-cols-2 lg:grid-cols-4 gap-4">
-                              <div className="space-y-1">
-                                <label className="text-[7px] font-black text-gray-400 uppercase tracking-widest">Responsable</label>
-                                <div className="flex items-center gap-2">
-                                  <UserCircle size={10} className="text-orbe-green/40" />
-                                  <span className="text-[9px] font-black text-orbe-green uppercase">{item.owner_id || mainP?.owner_id || 'Unassigned'}</span>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  <Layers size={10} className="text-orbe-green/40" />
-                                  <span className="text-[9px] font-bold text-gray-600 uppercase truncate">{item.effectiveStage || mainP?.client_status || mainP?.status || 'No status'}</span>
-                                </div>
+                            <span className="px-2 py-0.5 bg-orbe-green/5 text-orbe-green text-[8px] font-black rounded-lg uppercase border border-orbe-tan/10">
+                              {client?.client_type || item.client_type || 'Potential'}
+                            </span>
+                          </div>
+                          <div className="p-4 grid grid-cols-2 md:grid-cols-4 gap-4">
+                            <div className="space-y-1">
+                              <label className="text-[7px] font-black text-gray-400 uppercase tracking-widest">Responsable</label>
+                              <div className="flex items-center gap-2">
+                                <UserCircle size={10} className="text-orbe-green/40" />
+                                <span className="text-[9px] font-black text-orbe-green uppercase">{item.owner_id || mainP?.owner_id || 'Unassigned'}</span>
                               </div>
-
-                              <div className="space-y-1">
-                                <label className="text-[7px] font-black text-gray-400 uppercase tracking-widest">Latest Action</label>
-                                <div className="flex items-center gap-2">
-                                  <Activity size={10} className="text-orbe-green/40" />
-                                  <span className="text-[9px] font-black text-orbe-green uppercase truncate">{item.effectiveAction || mainP?.last_activity || mainP?.last_action || 'No action'}</span>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  <div className={`w-1.5 h-1.5 rounded-full ${isDone(mainP?.action_status) ? 'bg-green-500' : 'bg-blue-500'}`} />
-                                  <span className="text-[9px] font-bold text-gray-600 uppercase">{mainP?.action_status || 'Pending'}</span>
-                                </div>
-                              </div>
-
-                              <div className="space-y-1">
-                                <label className="text-[7px] font-black text-gray-400 uppercase tracking-widest">Dates & Priority</label>
-                                <div className="flex items-center gap-2">
-                                  <Calendar size={10} className="text-orbe-green/40" />
-                                  <span className={`text-[9px] font-black uppercase ${isOverdue(mainP?.next_action_date, mainP?.action_status) ? 'text-red-500' : 'text-gray-600'}`}>
-                                    Next: {formatDateSafe(mainP?.next_action_date)}
-                                  </span>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  <div className={`text-[8px] font-black px-1.5 rounded-sm uppercase tracking-tighter ${
-                                    (mainP?.priority === 'High') ? 'bg-red-50 text-red-600' :
-                                    (mainP?.priority === 'Medium') ? 'bg-amber-50 text-amber-600' :
-                                    'bg-gray-50 text-gray-500'
-                                  }`}>
-                                    {mainP?.priority || 'Low'}
-                                  </div>
-                                  <span className="text-[8px] font-bold text-gray-400 uppercase">Last: {formatDateSafe(mainP?.last_contact_date)}</span>
-                                </div>
-                              </div>
-
-                              <div className="space-y-1 col-span-2 lg:col-span-1">
-                                <label className="text-[7px] font-black text-gray-400 uppercase tracking-widest">Comments</label>
-                                {item.hasNoNextAction && <div className="text-[8px] font-bold text-amber-500 uppercase italic">No next action scheduled</div>}
-                                <p className="text-[9px] text-gray-400 italic line-clamp-3 leading-tight">{mainP?.notes || client?.notes || item.notes || 'No notes'}</p>
+                              <div className="flex items-center gap-2">
+                                <Layers size={10} className="text-orbe-green/40" />
+                                <span className="text-[9px] font-bold text-gray-600 uppercase truncate">{item.effectiveStage || mainP?.client_status || mainP?.status || 'No status'}</span>
                               </div>
                             </div>
-                            <div className="p-3 bg-gray-50/50 border-t border-orbe-tan/10 flex justify-end gap-3">
-                               <button 
-                                 onClick={() => { setView('database'); setSearchTerm(companyName); setSelectedDetail(null); }}
-                                 className="text-[8px] font-black text-orbe-green uppercase tracking-widest hover:underline"
-                               >
-                                 Open client
-                               </button>
-                               <button 
-                                 onClick={() => { setView('pipeline'); setSearchTerm(companyName); setSelectedDetail(null); }}
-                                 className="text-[8px] font-black text-orbe-green uppercase tracking-widest hover:underline"
-                               >
-                                 Open in pipeline
-                               </button>
+
+                            <div className="space-y-1">
+                              <label className="text-[7px] font-black text-gray-400 uppercase tracking-widest">Current Action</label>
+                              <div className="flex items-center gap-2">
+                                <Activity size={10} className="text-orbe-green/40" />
+                                <span className="text-[9px] font-black text-orbe-green uppercase truncate">{item.effectiveAction || mainP?.last_activity || mainP?.last_action || 'No action'}</span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <div className={`w-1.5 h-1.5 rounded-full ${isDone(mainP?.action_status) ? 'bg-green-500' : 'bg-blue-500'}`} />
+                                <span className="text-[9px] font-bold text-gray-600 uppercase">{mainP?.action_status || 'Pending'}</span>
+                              </div>
+                            </div>
+
+                            <div className="space-y-1">
+                              <label className="text-[7px] font-black text-gray-400 uppercase tracking-widest">Dates & Priority</label>
+                              <div className="flex items-center gap-2">
+                                <Calendar size={10} className="text-orbe-green/40" />
+                                <span className={`text-[9px] font-black uppercase ${isOverdue(mainP?.next_action_date, mainP?.action_status) ? 'text-red-500' : 'text-gray-600'}`}>
+                                  {formatDateSafe(mainP?.next_action_date)}
+                                </span>
+                              </div>
+                              <div className={`text-[8px] font-black px-1.5 rounded-sm uppercase tracking-tighter w-fit ${
+                                (mainP?.priority === 'High') ? 'bg-red-50 text-red-600' :
+                                (mainP?.priority === 'Medium') ? 'bg-amber-50 text-amber-600' :
+                                'bg-gray-50 text-gray-500'
+                              }`}>
+                                {mainP?.priority || 'Low'}
+                              </div>
+                            </div>
+
+                            <div className="space-y-1 col-span-2 md:col-span-1">
+                              <label className="text-[7px] font-black text-gray-400 uppercase tracking-widest">Interaction Note</label>
+                              <p className="text-[9px] text-gray-400 italic line-clamp-3 leading-tight">{mainP?.notes || client?.notes || item.notes || 'No notes available'}</p>
                             </div>
                           </div>
-                        );
-                      })
-                    ) : (
-                      <div className="h-full flex flex-col items-center justify-center text-center p-12 space-y-4">
-                        <div className="w-16 h-16 bg-orbe-tan/10 rounded-full flex items-center justify-center text-orbe-tan/40">
-                          <Database size={32} />
+                          <div className="p-3 bg-gray-50/50 border-t border-orbe-tan/10 flex justify-end gap-3">
+                             <button 
+                               onClick={() => { setView('database'); setSearchTerm(companyName); setSelectedDetail(null); }}
+                               className="text-[8px] font-black text-orbe-green uppercase tracking-widest hover:underline"
+                             >
+                               Open client
+                             </button>
+                             <button 
+                               onClick={() => { setView('pipeline'); setSearchTerm(companyName); setSelectedDetail(null); }}
+                               className="text-[8px] font-black text-orbe-green uppercase tracking-widest hover:underline"
+                             >
+                               Go to pipeline
+                             </button>
+                          </div>
                         </div>
-                        <div>
-                          <p className="text-sm font-black text-orbe-green uppercase">No records found</p>
-                          <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">No items match the selected segment or highlight</p>
-                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="h-full flex flex-col items-center justify-center text-center p-12 space-y-4">
+                      <div className="w-16 h-16 bg-orbe-tan/10 rounded-full flex items-center justify-center text-orbe-tan/40">
+                        <Database size={32} />
                       </div>
-                    )}
-                  </div>
-                </motion.div>
-              </div>
+                      <div>
+                        <p className="text-sm font-black text-orbe-green uppercase">No records found</p>
+                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">No items match the selected segment or highlight</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </OrbeModal>
             )}
           </AnimatePresence>
 
-          {/* ACTIVITY DETAIL DRAWER */}
+          {/* POSTPONED BALANCE MODAL */}
           <AnimatePresence>
             {selectedPostponedList && (
-              <div key="postponed-drawer-container" className="fixed inset-0 z-[60] flex justify-end">
-                <motion.div 
-                  key="postponed-drawer-overlay"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  onClick={() => setSelectedPostponedList(null)}
-                  className="absolute inset-0 bg-black/40 backdrop-blur-sm shadow-2xl"
-                />
-                <motion.div 
-                  key="postponed-drawer-content"
-                  initial={{ x: '100%' }}
-                  animate={{ x: 0 }}
-                  exit={{ x: '100%' }}
-                  transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-                  className="relative w-full md:max-w-4xl bg-white h-full shadow-2xl flex flex-col border-l border-orbe-tan/30 overflow-hidden"
-                >
-                  <div className="p-6 border-b border-orbe-tan/20 flex items-center justify-between bg-orange-600 text-white">
-                    <div className="flex items-center gap-3">
-                      <div className="p-2 bg-white/10 rounded-xl">
-                        <Clock size={20} />
-                      </div>
-                      <div>
-                        <h3 className="font-black text-lg uppercase tracking-tight">Postponed Balance - {selectedPostponedList.owner}</h3>
-                        <p className="text-[10px] font-bold text-white/60 uppercase tracking-widest">Delayed follow-ups analysis</p>
-                      </div>
+              <OrbeModal
+                isOpen={!!selectedPostponedList}
+                onClose={() => setSelectedPostponedList(null)}
+                title="Postponed Balance"
+                subtitle={`Analyzing delayed interactions for ${selectedPostponedList.owner}`}
+                icon={<Clock size={20} />}
+                variant="amber"
+                modalKey="postponed-modal"
+                size="2xl"
+                footer={
+                  <button 
+                    onClick={() => setSelectedPostponedList(null)}
+                    className="w-full py-4 bg-orange-600 text-white font-black uppercase tracking-widest rounded-2xl shadow-lg shadow-orange-600/20 active:scale-[0.98] transition-all"
+                  >
+                    Close Report
+                  </button>
+                }
+              >
+                <div className="space-y-6">
+                  {selectedPostponedList.items.length === 0 ? (
+                    <div className="py-20 text-center text-gray-400 italic font-medium bg-gray-50/50 rounded-3xl border-2 border-dashed border-gray-100 uppercase tracking-widest text-[10px]">
+                      No postponed actions tracked for {selectedPostponedList.owner}.
                     </div>
-                    <button 
-                      onClick={() => setSelectedPostponedList(null)}
-                      className="p-2 hover:bg-white/10 rounded-full transition-colors"
-                    >
-                      <XCircle size={24} />
-                    </button>
-                  </div>
-
-                  <div className="flex-1 overflow-auto p-0 scrollbar-thin scrollbar-thumb-orbe-tan/20 pb-32">
-                    {selectedPostponedList.items.length === 0 ? (
-                      <div className="p-20 text-center text-gray-400 italic">
-                        No postponed actions found for this seller ({selectedPostponedList.owner}).
-                      </div>
-                    ) : (
-                      <>
-                        {/* DESKTOP TABLE */}
-                        <table className="w-full text-left border-collapse hidden md:table desktop-table-only">
-                          <thead className="bg-gray-50 border-b border-orbe-tan/20 sticky top-0 z-10">
-                            <tr>
-                              <th className="p-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">Company</th>
-                              <th className="p-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">Postponed Action</th>
-                              <th className="p-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">From Date (Last)</th>
-                              <th className="p-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">To Date (Next)</th>
-                              <th className="p-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">Notes</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-orbe-tan/10">
-                            {selectedPostponedList.items.map((item, index) => {
-                              const fromDate = item.last_contact_date || (item as any).previous_next_action_date || (item as any).old_next_action_date || (item as any).original_action_date || (item as any).previous_action_date;
-                              
-                              return (
-                                <tr key={getPipelineKey(item, 'postponed-detail', index)} className="hover:bg-orange-50/30 transition-colors">
-                                  <td className="p-4">
-                                    <span className="text-[11px] font-black text-orbe-green uppercase tracking-tight">
-                                      {item.company_name || (item as any).company || 'Unknown company'}
-                                    </span>
-                                  </td>
-                                  <td className="p-4">
-                                    <span className="text-[10px] text-gray-600 italic">
-                                      {item.last_activity || item.last_action || 'Postponed action'}
-                                    </span>
-                                  </td>
-                                  <td className="p-4">
-                                    <span className="text-[9px] font-bold text-gray-400 uppercase">
-                                      {fromDate ? formatDateSafe(fromDate) : 'Not available'}
-                                    </span>
-                                  </td>
-                                  <td className="p-4">
-                                    <span className="text-[9px] font-bold text-orange-600 uppercase">
-                                      {item.next_action_date ? formatDateSafe(item.next_action_date) : (item as any).action_date ? formatDateSafe((item as any).action_date) : 'Not available'}
-                                    </span>
-                                  </td>
-                                  <td className="p-4">
-                                    <p className="text-[10px] text-gray-500 max-w-[200px] truncate" title={item.notes || (item as any).notas}>
-                                      {item.notes || (item as any).notas || 'No notes'}
-                                    </p>
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-
-                        {/* MOBILE CARDS */}
-                        <div className="md:hidden divide-y divide-orbe-tan/10">
+                  ) : (
+                    <div className="overflow-hidden border border-orbe-tan/20 rounded-2xl">
+                      <table className="w-full text-left border-collapse">
+                        <thead className="bg-gray-50 border-b border-orbe-tan/20">
+                          <tr>
+                            <th className="p-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">Company</th>
+                            <th className="p-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">Delayed Action</th>
+                            <th className="p-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">Orig. Date</th>
+                            <th className="p-4 text-[9px] font-black text-gray-400 uppercase tracking-widest">Target Date</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-orbe-tan/10">
                           {selectedPostponedList.items.map((item, index) => {
                             const fromDate = item.last_contact_date || (item as any).previous_next_action_date || (item as any).old_next_action_date || (item as any).original_action_date || (item as any).previous_action_date;
                             
                             return (
-                              <div key={getPipelineKey(item, 'postponed-mobile-detail', index)} className="p-4 space-y-3">
-                                <div>
-                                  <h6 className="font-black text-orbe-green text-sm uppercase tracking-tight">{item.company_name || 'Unknown company'}</h6>
-                                  <p className="text-[10px] text-gray-500 italic mt-1 leading-snug">"{item.last_activity || 'Postponed action'}"</p>
-                                </div>
-                                <div className="grid grid-cols-2 gap-3">
-                                  <div className="bg-gray-50 p-2 rounded-lg border border-orbe-tan/10">
-                                    <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest">From (Last)</p>
-                                    <p className="text-[10px] font-bold text-gray-600">{fromDate ? formatDateSafe(fromDate) : 'N/A'}</p>
-                                  </div>
-                                  <div className="bg-orange-50 p-2 rounded-lg border border-orange-100">
-                                    <p className="text-[8px] font-black text-orange-400 uppercase tracking-widest">To (Next)</p>
-                                    <p className="text-[10px] font-bold text-orange-600">{item.next_action_date ? formatDateSafe(item.next_action_date) : 'N/A'}</p>
-                                  </div>
-                                </div>
-                                {item.notes && (
-                                  <div className="p-3 bg-gray-50/50 rounded-xl border border-orbe-tan/5">
-                                    <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mb-1">Notes</p>
-                                    <p className="text-[10px] text-gray-600">{item.notes}</p>
-                                  </div>
-                                )}
-                              </div>
+                              <tr key={getPipelineKey(item, 'postponed-detail', index)} className="hover:bg-orange-50/30 transition-colors group">
+                                <td className="p-4">
+                                  <span className="text-[11px] font-black text-orbe-green uppercase tracking-tight group-hover:text-orange-600 transition-colors">
+                                    {item.company_name || (item as any).company || 'Unknown account'}
+                                  </span>
+                                </td>
+                                <td className="p-4">
+                                  <span className="text-[10px] text-gray-500 font-medium truncate max-w-[150px] block">
+                                    {item.last_activity || item.last_action || 'Pending follow-up'}
+                                  </span>
+                                </td>
+                                <td className="p-4">
+                                  <span className="text-[9px] font-bold text-gray-400 uppercase">
+                                    {fromDate ? formatDateSafe(fromDate) : '---'}
+                                  </span>
+                                </td>
+                                <td className="p-4">
+                                  <span className="text-[10px] font-black text-orange-600 uppercase tabular-nums">
+                                    {item.next_action_date ? formatDateSafe(item.next_action_date) : 'PENDING'}
+                                  </span>
+                                </td>
+                              </tr>
                             );
                           })}
-                        </div>
-                      </>
-                    )}
-                  </div>
-
-                  <div className="p-6 bg-gray-50 border-t border-orbe-tan/20">
-                    <button 
-                      onClick={() => setSelectedPostponedList(null)}
-                      className="w-full py-4 bg-orange-600 text-white font-black uppercase tracking-widest rounded-2xl shadow-lg shadow-orange-600/20 active:scale-[0.98] transition-all"
-                    >
-                      Close Details
-                    </button>
-                  </div>
-                </motion.div>
-              </div>
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </OrbeModal>
             )}
           </AnimatePresence>
 
-          {/* ACTIVITY DETAIL DRAWER */}
+          {/* SELLER ACTIVITY MODAL */}
           <AnimatePresence>
             {selectedActivityList && (
-              <div key="selected-activity-drawer-container" className="fixed inset-0 z-[60] flex justify-end">
-                <motion.div 
-                  key="selected-activity-drawer-overlay"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  onClick={() => setSelectedActivityList(null)}
-                  className="absolute inset-0 bg-black/40 backdrop-blur-sm shadow-2xl"
-                />
-                <motion.div 
-                  key="selected-activity-drawer-content"
-                  initial={{ x: '100%' }}
-                  animate={{ x: 0 }}
-                  exit={{ x: '100%' }}
-                  transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-                  className="relative w-full max-w-md bg-white h-full shadow-2xl flex flex-col border-l border-orbe-tan/30 overflow-hidden"
-                >
-                  {/* Header Drawer */}
-                  <div className="p-6 border-b border-orbe-tan/20 flex items-center justify-between bg-orbe-green text-white">
-                    <div className="flex items-center gap-3">
-                      <div className="p-2 bg-white/10 rounded-xl">
-                        <History size={20} />
-                      </div>
-                      <div>
-                        <h3 className="font-black text-lg uppercase tracking-tight">{selectedActivityList.owner} - Activities</h3>
-                        <p className="text-[10px] font-bold text-white/60 uppercase tracking-widest">Last {selectedActivityList.days} days summary</p>
-                      </div>
-                    </div>
-                    <button 
-                      onClick={() => setSelectedActivityList(null)}
-                      className="p-2 hover:bg-white/10 rounded-full transition-colors"
-                    >
-                      <XCircle size={24} />
-                    </button>
+              <OrbeModal
+                isOpen={!!selectedActivityList}
+                onClose={() => setSelectedActivityList(null)}
+                title="Activity Analysis"
+                subtitle={`Performance tracking for ${selectedActivityList.owner}`}
+                icon={<Activity size={20} />}
+                modalKey="seller-activity-modal"
+                footer={
+                  <button 
+                    onClick={() => setSelectedActivityList(null)}
+                    className="w-full py-4 bg-orbe-green text-white font-black uppercase tracking-widest rounded-2xl shadow-lg shadow-orbe-green/20 active:scale-[0.98] transition-all"
+                  >
+                    Close Analysis
+                  </button>
+                }
+              >
+                <div className="space-y-8">
+                  {/* Stats Summary */}
+                  <div className="grid grid-cols-2 gap-3">
+                    {Object.entries(
+                      selectedActivityList.items.reduce((acc: any, item) => {
+                        const name = item.last_activity || 'Others';
+                        acc[name] = (acc[name] || 0) + 1;
+                        return acc;
+                      }, {})
+                    ).map(([name, count]: [string, any], index) => {
+                      const percentage = Math.round((count / selectedActivityList.items.length) * 100);
+                      return (
+                        <div key={safeKey('drawer-stat', name, index)} className="bg-gray-50/50 border border-orbe-tan/10 p-4 rounded-2xl flex flex-col items-center text-center">
+                          <span className="text-xl font-black text-orbe-green">{percentage}%</span>
+                          <span className="text-[8px] font-black text-gray-400 uppercase tracking-widest mt-1 leading-tight">{name}</span>
+                        </div>
+                      );
+                    })}
                   </div>
 
-                  <div className="flex-1 overflow-y-auto p-6 space-y-8 scrollbar-thin scrollbar-thumb-orbe-tan/20 pb-32">
-                    <div className="space-y-4">
-                      <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-2">
-                        <Target size={12} /> Action Type Distribution
-                      </h4>
-                      <div className="flex flex-wrap gap-2">
-                        {Object.entries(
-                          selectedActivityList.items.reduce((acc: any, item) => {
-                            const name = item.last_activity || 'Others';
-                            acc[name] = (acc[name] || 0) + 1;
-                            return acc;
-                          }, {})
-                        ).map(([name, count]: [string, any], index) => {
-                          const percentage = Math.round((count / selectedActivityList.items.length) * 100);
-                          return (
-                            <div key={safeKey('drawer-stat', name, index)} className="bg-gray-50 border border-gray-100 px-3 py-2 rounded-xl flex flex-col items-center min-w-[80px]">
-                              <span className="text-lg font-black text-orbe-green">{percentage}%</span>
-                              <span className="text-[8px] font-bold text-gray-400 uppercase text-center mt-0.5 leading-tight truncate w-full">{name}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
+                  {/* Activity Log */}
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-2 px-1">
+                      <Clock size={14} className="text-orbe-green/40" />
+                      <h4 className="text-[10px] font-black text-orbe-green uppercase tracking-[0.2em]">Detailed History</h4>
                     </div>
-
-                    <div className="space-y-4">
-                      <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-2">
-                        <Clock size={12} /> Detailed History
-                      </h4>
-                      <div className="space-y-3">
-                        {selectedActivityList.items
-                          .sort((a,b) => new Date(b.last_contact_date).getTime() - new Date(a.last_contact_date).getTime())
-                          .map((item, index) => (
-                          <div key={getPipelineKey(item, 'drawer-item', index)} className="bg-white border border-orbe-tan/30 p-4 rounded-2xl shadow-sm hover:border-orbe-green/30 transition-all flex flex-col gap-2 relative overflow-hidden group">
-                            <div className="absolute right-0 top-0 w-1 h-full bg-orbe-tan/20 group-hover:bg-orbe-green transition-colors" />
-                            <div className="flex justify-between items-start">
-                              <h5 className="font-black text-orbe-green text-sm uppercase tracking-tight">{item.company_name}</h5>
-                              <span className="text-[9px] font-mono text-gray-400 font-bold">{formatDateSafe(item.last_contact_date)}</span>
-                            </div>
-                            <p className="text-xs text-gray-600 border-l-2 border-orbe-tan/20 pl-3 py-1 italic bg-gray-50/50 rounded-r-lg">"{item.last_activity}"</p>
-                            <div className="flex items-center gap-2 mt-1">
-                              <span className={`text-[8px] font-black py-0.5 px-1.5 rounded uppercase tracking-tighter ${item.priority === 'High' ? 'bg-red-50 text-red-500' : 'bg-blue-50 text-blue-500'}`}>
-                                {item.priority}
-                              </span>
-                            </div>
+                    <div className="space-y-3">
+                      {selectedActivityList.items
+                        .sort((a,b) => new Date(b.last_contact_date).getTime() - new Date(a.last_contact_date).getTime())
+                        .map((item, index) => (
+                        <div key={getPipelineKey(item, 'drawer-item', index)} className="bg-white border border-orbe-tan/10 p-5 rounded-3xl shadow-sm hover:border-orbe-green/30 transition-all flex flex-col gap-3 relative overflow-hidden group">
+                          <div className="flex justify-between items-center bg-gray-50/50 -m-5 mb-0 px-5 py-3 border-b border-orbe-tan/10">
+                            <h5 className="font-black text-orbe-green text-[10px] uppercase tracking-tight">{item.company_name}</h5>
+                            <span className="text-[9px] font-black text-gray-400 tabular-nums">{formatDateSafe(item.last_contact_date)}</span>
                           </div>
-                        ))}
-                      </div>
+                          <div className="pt-2">
+                             <p className="text-xs text-gray-700 font-medium italic border-l-4 border-orbe-tan/20 pl-4 py-1">"{item.last_activity}"</p>
+                             <div className="flex items-center gap-2 mt-4">
+                               <div className={`w-1.5 h-1.5 rounded-full ${item.priority === 'High' ? 'bg-red-500' : 'bg-blue-500'}`} />
+                               <span className={`text-[9px] font-black uppercase tracking-widest ${item.priority === 'High' ? 'text-red-600' : 'text-blue-600'}`}>
+                                 {item.priority} Priority
+                               </span>
+                             </div>
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
-
-                  <div className="p-6 bg-gray-50 border-t border-orbe-tan/20">
-                    <button 
-                      onClick={() => setSelectedActivityList(null)}
-                      className="w-full py-4 bg-orbe-green text-white font-black uppercase tracking-widest rounded-2xl shadow-lg shadow-orbe-green/20 active:scale-[0.98] transition-all"
-                    >
-                      Close Analysis
-                    </button>
-                  </div>
-                </motion.div>
-              </div>
+                </div>
+              </OrbeModal>
             )}
           </AnimatePresence>
 
           {/* MODAL EDITAR CLIENTE */}
           <AnimatePresence>
             {editingClient && (
-              <div key="edit-client-modal-overlay" className="fixed inset-0 bg-black/60 backdrop-blur-md z-[110] flex items-center justify-center p-6">
-                <motion.div 
-                  key="edit-client-modal-content"
-                  initial={{ scale: 0.9, opacity: 0 }}
-                  animate={{ scale: 1, opacity: 1 }}
-                  exit={{ scale: 0.9, opacity: 0 }}
-                  className="bg-white rounded-t-3xl md:rounded-3xl w-full max-w-2xl shadow-2xl overflow-hidden h-[90vh] md:h-auto flex flex-col mt-auto md:mt-0"
-                >
-                  <div className="bg-orbe-green p-6 md:p-8 text-white flex justify-between items-center">
-                    <div>
-                      <h3 className="text-2xl font-bold flex items-center gap-3">
-                        <Settings className="w-6 h-6" /> Edit Information
-                      </h3>
-                      <p className="text-white/60 text-sm mt-1">{editingClient.company_name}</p>
-                    </div>
-                    <button onClick={() => setEditingClient(null)} className="p-2 hover:bg-white/10 rounded-full transition-colors text-white">
-                      <XCircle className="w-8 h-8" />
+              <OrbeModal
+                isOpen={!!editingClient}
+                onClose={() => setEditingClient(null)}
+                title="Edit Account"
+                subtitle={editingClient.company_name}
+                icon={<Settings className="w-5 h-5 md:w-6 md:h-6" />}
+                size="lg"
+                variant="default"
+                modalKey="edit-client-modal"
+                footer={
+                  <div className="flex flex-col md:flex-row gap-3">
+                    <button 
+                      type="button" 
+                      onClick={() => setEditingClient(null)} 
+                      className="flex-1 bg-gray-50 text-gray-500 py-4 rounded-xl font-bold text-[10px] uppercase tracking-[0.2em] hover:bg-gray-100 transition-all border border-gray-200"
+                    >
+                      CANCEL
+                    </button>
+                    <button 
+                      form="edit-client-form-v2"
+                      type="submit" 
+                      disabled={isSaving} 
+                      className="flex-[2] bg-orbe-green text-white py-4 rounded-xl font-bold text-[10px] uppercase tracking-[0.2em] hover:opacity-90 disabled:opacity-50 transition-all flex items-center justify-center gap-2 shadow-lg shadow-orbe-green/20"
+                    >
+                      {isSaving ? <Loader2 className="animate-spin" size={14} /> : <Save size={14} />} SAVE UPDATES
                     </button>
                   </div>
-                  
-                  <form 
-                      onSubmit={async (e) => {
-                        e.preventDefault();
-                        if (isSaving) return;
-                        setIsSaving(true);
-                        try {
-                          const formData = new FormData(e.currentTarget);
-                          const updates: any = {
-                            company_name: (formData.get('company_name') as string || '').trim(),
-                            contact_name: (formData.get('contact_name') as string || '').trim(),
-                            lead_name: (formData.get('lead_name') as string || '').trim(),
-                            email: (formData.get('email') as string || '').trim(),
-                            phone: (formData.get('phone') as string || '').trim(),
-                            mobile: (formData.get('mobile') as string || '').trim(),
-                            address: (formData.get('address') as string || '').trim(),
-                            client_type: formData.get('client_type') as string,
-                            notes: (formData.get('notes') as string || '').trim(),
-                          };
-                          await handleUpdateClient(editingClient.client_id, updates);
-                          setEditingClient(null);
-                          await fetchClients();
-                        } catch (err: any) {
-                          alert(`Error: ${err.message || 'Unknown'}`);
-                        } finally {
-                          setIsSaving(false);
-                        }
-                      }}
-                    className="p-6 md:p-8 space-y-6 overflow-y-auto flex-1 pb-32"
-                  >
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="col-span-2">
+                }
+              >
+                <form 
+                  id="edit-client-form-v2"
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    if (isSaving) return;
+                    setIsSaving(true);
+                    try {
+                      const formData = new FormData(e.currentTarget);
+                      const updates: any = {
+                        company_name: (formData.get('company_name') as string || '').trim(),
+                        contact_name: (formData.get('contact_name') as string || '').trim(),
+                        lead_name: (formData.get('lead_name') as string || '').trim(),
+                        email: (formData.get('email') as string || '').trim(),
+                        phone: (formData.get('phone') as string || '').trim(),
+                        mobile: (formData.get('mobile') as string || '').trim(),
+                        address: (formData.get('address') as string || '').trim(),
+                        client_type: formData.get('client_type') as string,
+                        notes: (formData.get('notes') as string || '').trim(),
+                        product_interest_tags: editingClientTags,
+                      };
+                      await handleUpdateClient(editingClient.client_id, updates);
+                      setEditingClient(null);
+                      await fetchClients();
+                    } catch (err: any) {
+                      alert(`Error: ${err.message || 'Unknown'}`);
+                    } finally {
+                      setIsSaving(false);
+                    }
+                  }}
+                  className="space-y-8"
+                >
+                  {/* SECTION 1: COMPANY */}
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-2 pb-2 border-b border-orbe-tan/20">
+                      <Building2 size={14} className="text-orbe-green" />
+                      <h4 className="text-[10px] font-black text-orbe-green/60 uppercase tracking-widest">Company Identification</h4>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="col-span-1 md:col-span-1">
                         <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Company Name</label>
-                        <input name="company_name" defaultValue={editingClient.company_name} className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-lg focus:ring-2 ring-orbe-green/10 outline-none transition-all font-semibold text-orbe-green" />
+                        <input name="company_name" defaultValue={editingClient.company_name} className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-xl focus:ring-2 ring-orbe-green/10 outline-none transition-all font-bold text-orbe-green" />
                       </div>
                       <div>
-                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Lead Name</label>
-                        <input name="lead_name" defaultValue={editingClient.lead_name} className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-lg focus:ring-2 ring-orbe-green/10 outline-none transition-all" />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Contact Person</label>
-                        <input name="contact_name" defaultValue={editingClient.contact_name} className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-lg focus:ring-2 ring-orbe-green/10 outline-none transition-all" />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Corporate Email</label>
-                        <input name="email" type="email" defaultValue={editingClient.email} className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-lg focus:ring-2 ring-orbe-green/10 outline-none transition-all" />
-                      </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Phone</label>
-                          <input name="phone" defaultValue={editingClient.phone} className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-lg focus:ring-2 ring-orbe-green/10 outline-none transition-all" />
-                        </div>
-                        <div>
-                          <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Mobile</label>
-                          <input name="mobile" defaultValue={editingClient.mobile} className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-lg focus:ring-2 ring-orbe-green/10 outline-none transition-all" />
-                        </div>
-                      </div>
-                      <div className="col-span-2">
-                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Office Address</label>
-                        <textarea name="address" rows={2} defaultValue={editingClient.address_line_1 || (editingClient as any).address} className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-lg focus:ring-2 ring-orbe-green/10 outline-none transition-all mb-1" />
-                      </div>
-                      <div className="col-span-2">
-                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Client Notes</label>
-                        <textarea name="notes" rows={4} defaultValue={editingClient.notes} className="w-full p-3 bg-blue-50/20 border border-blue-100/50 rounded-lg focus:ring-2 ring-blue-500/10 outline-none transition-all mb-4" />
-                      </div>
-                      <div className="col-span-2">
-                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Client Type</label>
-                        <select name="client_type" defaultValue={editingClient.client_type || 'Potential client'} className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-lg focus:ring-2 ring-orbe-green/10 outline-none transition-all font-bold text-orbe-green uppercase">
-                          <option value="Potential client">Potential client</option>
-                          <option value="Client">Client</option>
-                          <option value="Temporary Discarded">Temporary Discarded</option>
+                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Client Status</label>
+                        <select name="client_type" defaultValue={editingClient.client_type || 'Potential client'} className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-xl focus:ring-2 ring-orbe-green/10 outline-none transition-all font-bold text-orbe-green uppercase text-xs">
+                          <option value="Potential client">POTENTIAL CLIENT</option>
+                          <option value="Client">CLIENT</option>
+                          <option value="Temporary Discarded">TEMPORARY DISCARDED</option>
                         </select>
                       </div>
                     </div>
-                    <div className="flex flex-col md:flex-row gap-3">
-                      <button type="button" onClick={() => setEditingClient(null)} className="flex-1 bg-gray-100 text-gray-500 py-4 rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-gray-200 transition-all">
-                        CANCEL
-                      </button>
-                      <button type="submit" disabled={isSaving} className="flex-[2] bg-orbe-green text-white py-4 rounded-xl font-bold text-xs uppercase tracking-widest hover:opacity-90 disabled:opacity-50 transition-all flex items-center justify-center gap-2">
-                        {isSaving ? <Loader2 className="animate-spin" size={16} /> : <Save size={16} />} SAVE CHANGES
-                      </button>
+                  </div>
+
+                  {/* SECTION 2: CONTACT */}
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-2 pb-2 border-b border-orbe-tan/20">
+                      <Star size={14} className="text-orbe-green" />
+                      <h4 className="text-[10px] font-black text-orbe-green/60 uppercase tracking-widest">Contact Information</h4>
                     </div>
-                  </form>
-                </motion.div>
-              </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Lead Name</label>
+                        <input name="lead_name" defaultValue={editingClient.lead_name} className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-xl focus:ring-2 ring-orbe-green/10 outline-none transition-all" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Contact Person</label>
+                        <input name="contact_name" defaultValue={editingClient.contact_name} className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-xl focus:ring-2 ring-orbe-green/10 outline-none transition-all" />
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Corporate Email</label>
+                        <input name="email" type="email" defaultValue={editingClient.email} className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-xl focus:ring-2 ring-orbe-green/10 outline-none transition-all" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Phone</label>
+                        <input name="phone" defaultValue={editingClient.phone} className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-xl focus:ring-2 ring-orbe-green/10 outline-none transition-all" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Mobile</label>
+                        <input name="mobile" defaultValue={editingClient.mobile} className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-xl focus:ring-2 ring-orbe-green/10 outline-none transition-all" />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* SECTION 3: ADDRESS & NOTES */}
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-2 pb-2 border-b border-orbe-tan/20">
+                      <Globe size={14} className="text-orbe-green" />
+                      <h4 className="text-[10px] font-black text-orbe-green/60 uppercase tracking-widest">Logistics & Notes</h4>
+                    </div>
+                    <div className="grid grid-cols-1 gap-4">
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Office Address</label>
+                        <textarea name="address" rows={2} defaultValue={editingClient.address_line_1 || (editingClient as any).address} className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-xl focus:ring-2 ring-orbe-green/10 outline-none transition-all resize-none text-sm" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Client Notes</label>
+                        <textarea name="notes" rows={3} defaultValue={editingClient.notes} className="w-full p-3 bg-blue-50/20 border border-blue-100/50 rounded-xl focus:ring-2 ring-blue-500/10 outline-none transition-all resize-none text-sm" />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* SECTION 4: PRODUCT TAGS */}
+                  <div className="space-y-4 bg-orbe-cream/20 p-4 md:p-6 rounded-2xl border border-orbe-tan/20">
+                    <div className="flex items-center justify-between gap-2 pb-2 border-b border-orbe-tan/20">
+                      <div className="flex items-center gap-2">
+                        <Zap size={14} className="text-amber-500" />
+                        <h4 className="text-[10px] font-black text-orbe-green tracking-widest uppercase">Product Opportunity Tags</h4>
+                      </div>
+                      <span className="text-[8px] text-gray-400 font-bold uppercase tracking-tighter italic">Select all that apply</span>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {PRODUCT_INTEREST_TAGS.map(tag => {
+                        const isSelected = editingClientTags.includes(tag);
+                        return (
+                          <button
+                            key={tag}
+                            type="button"
+                            onClick={() => {
+                              if (isSelected) {
+                                setEditingClientTags(editingClientTags.filter(t => t !== tag));
+                              } else {
+                                setEditingClientTags([...editingClientTags, tag]);
+                              }
+                            }}
+                            className={`px-3 py-1.5 rounded-full text-[9px] md:text-[10px] font-black uppercase tracking-wider transition-all border ${
+                              isSelected 
+                                ? 'bg-orbe-green text-white border-orbe-green shadow-md scale-105' 
+                                : 'bg-white text-orbe-green/50 border-orbe-tan/40 hover:border-orbe-green/30 hover:text-orbe-green hover:bg-black/5'
+                            }`}
+                          >
+                            {getProductTagLabel(tag)}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </form>
+              </OrbeModal>
             )}
           </AnimatePresence>
 
-        {/* MODAL TASK ACCOMPLISHED */}
-        <AnimatePresence>
-          {taskToAccomplish && (
-            <motion.div 
-              key="task-modal-overlay"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-orbe-green/60 backdrop-blur-md"
-            >
-              <motion.div 
-                key="task-modal-content"
-                initial={{ scale: 0.9, y: 20 }}
-                animate={{ scale: 1, y: 0 }}
-                exit={{ scale: 0.9, y: 20 }}
-                className="bg-white w-full max-w-md rounded-t-3xl md:rounded-3xl shadow-2xl overflow-hidden border border-orbe-tan/30 h-[90vh] md:h-auto flex flex-col mt-auto md:mt-0"
-              >
-                <div className="bg-orbe-green p-6 text-white text-center relative">
-                    <CheckCircle className="w-10 h-10 mx-auto mb-2 opacity-50" />
-                    <h2 className="text-xl font-bold">Task Completed</h2>
-                    <p className="text-white/60 text-[10px] uppercase tracking-[0.2em] font-black">{taskToAccomplish.company_name}</p>
-                    <div className="flex items-center justify-center gap-2 mt-2 py-1 px-3 bg-white/10 rounded-full w-fit mx-auto border border-white/5">
-                      <UserCircle size={12} className="text-white/40" />
-                      <span className="text-[9px] font-bold text-white/70 uppercase">Responsable: {taskToAccomplish.owner_id || (taskToAccomplish as any).owner || (taskToAccomplish as any).assigned_to || (taskToAccomplish as any).assigned_to_user || 'Unassigned'}</span>
-                    </div>
+
+          {/* MODAL TASK ACCOMPLISHED */}
+          <AnimatePresence>
+            {taskToAccomplish && (
+              <OrbeModal
+                isOpen={!!taskToAccomplish}
+                onClose={() => {
+                  setTaskToAccomplish(null);
+                  setModalError(null);
+                }}
+                title="Action Completed"
+                subtitle={taskToAccomplish.company_name}
+                icon={<CheckCircle2 size={20} />}
+                variant="success"
+                modalKey="task-accomplish-modal"
+                footer={
+                  <div className="flex flex-col md:flex-row gap-3">
                     <button 
+                      type="button"
                       onClick={() => setTaskToAccomplish(null)}
-                      className="absolute top-4 right-4 p-2 hover:bg-white/10 rounded-full transition-all"
+                      className="flex-1 py-4 bg-gray-50 text-gray-500 rounded-2xl font-black text-[11px] uppercase tracking-[0.1em] hover:bg-gray-100 transition-all border border-gray-200"
                     >
-                      <XCircle size={18} className="text-white/40" />
+                      Cancel
+                    </button>
+                    <button 
+                      form="task-accomplish-form"
+                      type="submit"
+                      disabled={!accomplishAction || !accomplishDate}
+                      className={`flex-[2] py-4 rounded-2xl font-black text-[11px] uppercase tracking-[0.3em] transition-all shadow-xl active:scale-95 flex items-center justify-center gap-2 ${
+                        (!accomplishAction || !accomplishDate) 
+                          ? 'bg-gray-200 text-gray-400 cursor-not-allowed shadow-none' 
+                          : 'bg-orbe-green text-white hover:bg-orbe-green/90 shadow-orbe-green/20'
+                      }`}
+                    >
+                      <CheckCircle size={18} />
+                      Confirm & Schedule
                     </button>
                   </div>
-                  
-                    <form 
-                      onSubmit={(e) => {
-                        e.preventDefault();
-                        const formData = new FormData(e.currentTarget);
-                        const nextAction = accomplishAction;
-                        const comments = formData.get('comments') as string;
+                }
+              >
+                <form 
+                  id="task-accomplish-form"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const formData = new FormData(e.currentTarget);
+                    const nextAction = accomplishAction;
+                    const comments = formData.get('comments') as string;
 
-                        if (nextAction.trim().toLowerCase() === (taskToAccomplish.last_action || '').trim().toLowerCase()) {
-                          setModalError("Please select a NEW action. You cannot repeat the same action twice.");
-                          return;
-                        }
+                    if (nextAction.trim().toLowerCase() === (taskToAccomplish.last_action || '').trim().toLowerCase()) {
+                      setModalError("Please select a NEW action. You cannot repeat the same action twice.");
+                      return;
+                    }
 
-                        if (!comments || comments.trim().length < 5) {
-                          setModalError("Please provide more detailed comments (min 5 characters).");
-                          return;
-                        }
+                    if (!comments || comments.trim().length < 5) {
+                      setModalError("Please provide more detailed comments (min 5 characters).");
+                      return;
+                    }
 
-                        handleAccomplishTask(
-                          taskToAccomplish, 
-                          nextAction, 
-                          accomplishDate,
-                          comments,
-                          formData.get('new_status') as PipelineStatus
-                        );
-                      }}
-                      className="p-6 md:p-8 space-y-6 overflow-y-auto flex-1 pb-32"
-                    >
-                      {modalError && (
-                        <div className="bg-red-50 border border-red-200 text-red-600 p-3 rounded-xl text-[10px] font-bold uppercase tracking-widest animate-shake">
-                          {modalError}
-                        </div>
-                      )}
-                      
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div className="md:col-span-1">
-                          <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-[0.1em]">Next Action <span className="text-red-400">*</span></label>
-                          <select 
-                            name="next_action"
-                            required
-                            value={accomplishAction}
-                            onChange={(e) => {
-                              setModalError(null);
-                              setAccomplishAction(e.target.value);
-                            }}
-                            className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-xl outline-none focus:ring-4 ring-orbe-green/5 transition-all text-sm font-black text-orbe-green uppercase appearance-none cursor-pointer"
-                          >
-                            <option value="" disabled>SELECT ACTION</option>
-                            {PREDEFINED_ACTIONS.map(action => {
-                              const isCurrent = action.trim().toLowerCase() === (taskToAccomplish.last_action || '').trim().toLowerCase();
-                              return (
-                                <option 
-                                  key={action} 
-                                  value={action}
-                                  disabled={isCurrent}
-                                >
-                                  {action.toUpperCase()} {isCurrent ? '(CURRENT)' : ''}
-                                </option>
-                              );
-                            })}
-                          </select>
-                        </div>
+                    handleAccomplishTask(
+                      taskToAccomplish, 
+                      nextAction, 
+                      accomplishDate,
+                      comments,
+                      formData.get('new_status') as PipelineStatus
+                    );
+                  }}
+                  className="space-y-6"
+                >
+                  {modalError && (
+                    <div className="bg-red-50 border border-red-200 text-red-600 p-3 rounded-xl text-[10px] font-bold uppercase tracking-widest animate-shake">
+                      {modalError}
+                    </div>
+                  )}
 
-                        <div className="md:col-span-1">
-                          <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-[0.1em]">Next Due Date <span className="text-red-400">*</span></label>
-                          <input 
-                            type="date"
-                            name="next_due_date"
-                            required
-                            min={new Date().toISOString().split('T')[0]}
-                            value={accomplishDate}
-                            onChange={(e) => setAccomplishDate(e.target.value)}
-                            className="w-full p-3 bg-gray-50 border border-orbe-tan/30 rounded-xl outline-none focus:ring-4 ring-orbe-green/5 transition-all text-sm font-black text-orbe-green uppercase"
-                          />
-                        </div>
+                  <div className="bg-green-50 p-6 rounded-2xl border border-green-100 flex flex-col items-center text-center">
+                    <p className="text-green-800 text-sm font-medium italic">Logging accomplishment for:</p>
+                    <p className="text-green-900 font-black text-lg mt-1 truncate w-full">{taskToAccomplish.company_name}</p>
+                    <div className="mt-2 text-[10px] font-bold text-green-700/60 uppercase tracking-widest italic flex items-center gap-2">
+                       <Activity size={12} /> {taskToAccomplish.last_action || 'Current Action'}
+                    </div>
+                  </div>
 
-                        <div className="md:col-span-2">
-                          <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-[0.1em]">Business Stage</label>
-                          <select 
-                            name="new_status"
-                            defaultValue={taskToAccomplish.status}
-                            className="w-full p-3.5 bg-gray-50 border border-orbe-tan/30 rounded-xl outline-none focus:ring-4 ring-orbe-green/5 transition-all text-[12px] font-black text-orbe-green uppercase appearance-none cursor-pointer"
-                          >
-                            {PIPELINE_STATUSES.map(status => (
-                              <option key={status} value={status}>{status.toUpperCase()}</option>
-                            ))}
-                          </select>
-                        </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="md:col-span-1">
+                      <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-[0.1em]">Next Action <span className="text-red-400">*</span></label>
+                      <select 
+                        name="next_action"
+                        required
+                        value={accomplishAction}
+                        onChange={(e) => {
+                          setModalError(null);
+                          setAccomplishAction(e.target.value);
+                        }}
+                        className="w-full p-4 bg-gray-50 border border-orbe-tan/30 rounded-xl outline-none focus:ring-4 ring-orbe-green/5 transition-all text-sm font-black text-orbe-green uppercase appearance-none cursor-pointer"
+                      >
+                        <option value="" disabled>SELECT ACTION</option>
+                        {PREDEFINED_ACTIONS.map(action => {
+                          const isCurrent = action.trim().toLowerCase() === (taskToAccomplish.last_action || '').trim().toLowerCase();
+                          return (
+                            <option 
+                              key={action} 
+                              value={action}
+                              disabled={isCurrent}
+                            >
+                              {action.toUpperCase()} {isCurrent ? '(CURRENT)' : ''}
+                            </option>
+                          );
+                        })}
+                      </select>
+                    </div>
 
-                        <div className="md:col-span-2">
-                          <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-[0.1em]">Comments / Notes</label>
-                          <textarea 
-                            name="comments"
-                            required
-                            rows={4}
-                            className="w-full p-4 bg-gray-50 border border-orbe-tan/30 rounded-xl focus:ring-4 ring-orbe-green/5 outline-none transition-all text-sm min-h-[100px] resize-none"
-                            placeholder="Detail the interaction outcome here..."
-                          />
-                        </div>
-                      </div>
+                    <div className="md:col-span-1">
+                      <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-[0.1em]">Next Due Date <span className="text-red-400">*</span></label>
+                      <input 
+                        type="date"
+                        name="next_due_date"
+                        required
+                        min={new Date().toISOString().split('T')[0]}
+                        value={accomplishDate}
+                        onChange={(e) => setAccomplishDate(e.target.value)}
+                        className="w-full p-4 bg-gray-50 border border-orbe-tan/30 rounded-xl outline-none focus:ring-4 ring-orbe-green/5 transition-all text-sm font-black text-orbe-green uppercase"
+                      />
+                    </div>
 
-                      <div className="flex flex-col md:flex-row gap-3 pt-2">
-                        <button 
-                          type="submit"
-                          disabled={!accomplishAction || !accomplishDate}
-                          className={`flex-1 py-4 rounded-2xl font-black text-[11px] uppercase tracking-[0.3em] transition-all shadow-xl active:scale-95 flex items-center justify-center gap-2 ${
-                            (!accomplishAction || !accomplishDate) 
-                              ? 'bg-gray-200 text-gray-400 cursor-not-allowed shadow-none' 
-                              : 'bg-orbe-green text-white hover:bg-orbe-green/90 shadow-orbe-green/20'
-                          }`}
-                        >
-                          <CheckCircle size={18} />
-                          Confirm & Schedule
-                        </button>
-                        <button 
-                          type="button"
-                          onClick={() => setTaskToAccomplish(null)}
-                          className="py-4 px-6 md:px-8 bg-gray-100 text-gray-400 rounded-2xl font-black text-[11px] uppercase tracking-[0.1em] hover:bg-gray-200 transition-all border border-gray-200"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </form>
-                </motion.div>
-              </motion.div>
+                    <div className="md:col-span-2">
+                      <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-[0.1em]">Target Account Stage</label>
+                      <select 
+                        name="new_status"
+                        defaultValue={taskToAccomplish.status}
+                        className="w-full p-4 bg-gray-50 border border-orbe-tan/30 rounded-xl outline-none focus:ring-4 ring-orbe-green/5 transition-all text-[12px] font-black text-orbe-green uppercase appearance-none cursor-pointer"
+                      >
+                        {PIPELINE_STATUSES.map(status => (
+                          <option key={status} value={status}>{status.toUpperCase()}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="md:col-span-2">
+                      <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-[0.1em]">Interaction Details / Feedback</label>
+                      <textarea 
+                        name="comments"
+                        required
+                        rows={4}
+                        className="w-full p-4 bg-gray-50 border border-orbe-tan/30 rounded-xl focus:ring-4 ring-orbe-green/5 outline-none transition-all text-sm min-h-[100px] resize-none"
+                        placeholder="Detail what happened during the contact..."
+                      />
+                    </div>
+                  </div>
+                </form>
+              </OrbeModal>
             )}
           </AnimatePresence>
+
 
         {/* MODAL POSTPONE */}
         <AnimatePresence>
           {postponeItem && (
-            <motion.div 
-              key="postpone-modal-overlay"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-orbe-green/40 backdrop-blur-sm"
-            >
-              <motion.div 
-                key="postpone-modal-content"
-                initial={{ scale: 0.9, y: 20 }}
-                animate={{ scale: 1, y: 0 }}
-                exit={{ scale: 0.9, y: 20 }}
-                className="bg-white w-full max-w-sm rounded-t-3xl md:rounded-3xl shadow-2xl overflow-hidden border border-orbe-tan/30 h-[80vh] md:h-auto flex flex-col mt-auto md:mt-0"
-              >
-                <div className="bg-orbe-green p-6 text-white text-center">
-                  <Calendar className="w-10 h-10 mx-auto mb-2 opacity-50" />
-                  <h2 className="text-xl font-bold">Postpone Action</h2>
-                  <p className="text-white/60 text-xs uppercase tracking-widest font-bold">{postponeItem.company_name}</p>
-                </div>
-                
-                <form 
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    if (!postponeReason || !postponeReason.trim() || postponeReason.trim().length < 5) {
-                      setModalError("Please provide a valid reason (min 5 characters).");
+            <OrbeModal
+              isOpen={!!postponeItem}
+              onClose={() => {
+                setPostponeItem(null);
+                setModalError(null);
+                setIsConfirmingPostpone(false);
+              }}
+              title="Postpone Action"
+              subtitle={postponeItem.company_name}
+              icon={<Clock size={20} />}
+              variant="amber"
+              modalKey="postpone-modal"
+              footer={
+                <div className="flex flex-col md:flex-row gap-3">
+                  <button 
+                    type="button"
+                    onClick={() => {
+                      setPostponeItem(null);
                       setIsConfirmingPostpone(false);
-                      return;
-                    }
-                    handlePostponeTask(postponeItem, postponeDate, postponeReason);
-                  }}
-                  className="p-8 space-y-6 overflow-y-auto flex-1 pb-32"
-                >
-                  {modalError && (
-                    <div className="bg-red-50 border border-red-200 text-red-600 p-3 rounded-xl text-[10px] font-bold uppercase tracking-widest text-center animate-shake">
-                      {modalError}
-                    </div>
-                  )}
+                    }} 
+                    className="flex-1 py-4 bg-white text-gray-500 rounded-2xl font-black text-[11px] uppercase tracking-[0.1em] hover:bg-gray-50 transition-all border border-orbe-tan/30"
+                  >
+                    Cancel
+                  </button>
                   {!isConfirmingPostpone ? (
-                    <>
-                      <div className="bg-gray-100 p-4 rounded-2xl border border-gray-200 flex items-center gap-3">
-                        <UserCircle size={20} className="text-orbe-green opacity-50" />
+                    <button 
+                      type="button"
+                      onClick={() => {
+                        if (!postponeDate) {
+                          setModalError("Please select a date.");
+                          return;
+                        }
+                        if (!postponeReason || !postponeReason.trim() || postponeReason.trim().length < 5) {
+                          setModalError("Please provide a valid reason (min 5 characters).");
+                          return;
+                        }
+                        setModalError(null);
+                        setIsConfirmingPostpone(true);
+                      }}
+                      className="flex-[2] py-4 bg-amber-500 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:opacity-90 transition-all shadow-lg shadow-amber-500/20 active:scale-95 flex items-center justify-center gap-2"
+                    >
+                      <Save size={14} />
+                      Continue
+                    </button>
+                  ) : (
+                    <button 
+                      form="postpone-form"
+                      type="submit"
+                      className="flex-[2] py-4 bg-amber-600 text-white rounded-2xl font-black text-xs uppercase tracking-widest hover:opacity-90 transition-all shadow-lg shadow-amber-600/20 active:scale-95"
+                    >
+                      Confirm Reschedule
+                    </button>
+                  )}
+                </div>
+              }
+            >
+              <form 
+                id="postpone-form"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (!postponeReason || !postponeReason.trim() || postponeReason.trim().length < 5) {
+                    setModalError("Please provide a valid reason (min 5 characters).");
+                    setIsConfirmingPostpone(false);
+                    return;
+                  }
+                  handlePostponeTask(postponeItem, postponeDate, postponeReason);
+                }}
+                className="space-y-6"
+              >
+                {modalError && (
+                  <div className="bg-red-50 border border-red-200 text-red-600 p-3 rounded-xl text-[10px] font-bold uppercase tracking-widest text-center animate-shake">
+                    {modalError}
+                  </div>
+                )}
+                
+                {!isConfirmingPostpone ? (
+                  <>
+                    <div className="bg-amber-50/50 p-6 rounded-2xl border border-amber-100 flex flex-col items-center text-center">
+                      <p className="text-amber-800 text-sm font-medium italic">Rescheduling current action for:</p>
+                      <p className="text-amber-900 font-black text-lg mt-1 truncate w-full">{postponeItem.company_name}</p>
+                    </div>
+
+                    <div className="space-y-4">
+                      <div className="bg-gray-50 p-4 rounded-xl border border-orbe-tan/20 flex items-center gap-3">
+                        <UserCircle size={18} className="text-orbe-green opacity-50" />
                         <div>
-                          <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">Assigned Owner</p>
+                          <p className="text-[8px] font-bold text-gray-400 uppercase tracking-widest">Responsable</p>
                           <p className="text-xs font-black text-orbe-green uppercase">
                             {postponeItem.owner_id || 
                              (postponeItem as any).owner || 
@@ -4860,11 +5423,10 @@ export default function App() {
                              'Unassigned'}
                           </p>
                         </div>
-                        <span className="ml-auto text-[8px] font-black bg-white px-2 py-1 rounded-md border border-gray-200 text-gray-400 uppercase tracking-tighter">Persistent</span>
                       </div>
 
                       <div>
-                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-3 tracking-widest text-center">Select New Action Date</label>
+                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-3 tracking-widest">Select New Date</label>
                         <input 
                           type="date"
                           min={new Date().toISOString().split('T')[0]}
@@ -4878,13 +5440,12 @@ export default function App() {
                             setModalError(null);
                             setPostponeDate(e.target.value);
                           }}
-                          className="w-full p-4 bg-gray-50 border border-orbe-tan/30 rounded-xl focus:ring-2 ring-orbe-green/10 outline-none transition-all text-sm font-bold text-orbe-green text-center"
+                          className="w-full p-4 bg-gray-50 border border-orbe-tan/30 rounded-xl focus:ring-2 ring-amber-500/10 outline-none transition-all text-sm font-bold text-orbe-green"
                         />
-                        <p className="mt-2 text-[9px] text-gray-400 text-center italic">Limit: Next 3 months</p>
                       </div>
 
                       <div>
-                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-3 tracking-widest">Reason for postponing <span className="text-red-400">*</span></label>
+                        <label className="block text-[10px] font-bold text-gray-400 uppercase mb-3 tracking-widest">Justification <span className="text-red-400">*</span></label>
                         <textarea 
                           value={postponeReason}
                           onChange={(e) => {
@@ -4892,206 +5453,177 @@ export default function App() {
                             setPostponeReason(e.target.value);
                           }}
                           required
-                          className="w-full p-4 bg-gray-50 border border-orbe-tan/30 rounded-xl focus:ring-2 ring-orbe-green/10 outline-none transition-all text-sm min-h-[80px]"
-                          placeholder="Why are you rescheduling?"
+                          rows={3}
+                          className="w-full p-4 bg-gray-50 border border-orbe-tan/30 rounded-xl focus:ring-2 ring-amber-500/10 outline-none transition-all text-sm resize-none"
+                          placeholder="Why is this action being delayed?"
                         />
                       </div>
-
-                      <div className="flex flex-col gap-3">
-                        <button 
-                          type="button"
-                          onClick={() => {
-                            if (!postponeDate) {
-                              setModalError("Please select a date.");
-                              return;
-                            }
-                            if (!postponeReason || !postponeReason.trim() || postponeReason.trim().length < 5) {
-                              setModalError("Please provide a valid reason (min 5 characters).");
-                              return;
-                            }
-                            setModalError(null);
-                            setIsConfirmingPostpone(true);
-                          }}
-                          className="w-full py-4 bg-orbe-green text-white rounded-xl font-bold text-xs uppercase tracking-widest hover:opacity-90 transition-all shadow-lg active:scale-95 flex items-center justify-center gap-2"
-                        >
-                          <Save size={14} />
-                          Continue
-                        </button>
-                        <button 
-                          type="button"
-                          onClick={() => {
-                            setPostponeItem(null);
-                            setPostponeDate('');
-                            setPostponeReason('');
-                            setIsConfirmingPostpone(false);
-                          }} 
-                          className="w-full py-4 bg-gray-100 text-gray-500 rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-gray-200 transition-all"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </>
-                  ) : (
-                    <div className="text-center space-y-6 py-2">
-                      <div className="w-16 h-16 bg-orange-50 text-orange-500 rounded-full flex items-center justify-center mx-auto mb-4 border border-orange-100">
-                        <AlertCircle size={32} />
-                      </div>
-                      <div className="space-y-2">
-                        <h3 className="font-bold text-orbe-green">Confirm rescheduling?</h3>
-                        <p className="text-sm text-gray-500">
-                          You are about to postpone this action until <span className="font-black text-orbe-green">{formatDateSafe(postponeDate, { day: '2-digit', month: 'long', year: 'numeric' })}</span>.
-                        </p>
-                      </div>
-                      
-                      <div className="flex flex-col gap-3 pt-4">
-                        <button 
-                          type="submit"
-                          className="w-full py-4 bg-orbe-green text-white rounded-xl font-bold text-xs uppercase tracking-widest hover:opacity-90 transition-all shadow-lg active:scale-95"
-                        >
-                          YES, CONFIRM
-                        </button>
-                        <button 
-                          type="button"
-                          onClick={() => setIsConfirmingPostpone(false)}
-                          className="w-full py-4 bg-gray-100 text-gray-500 rounded-xl font-bold text-xs uppercase tracking-widest hover:bg-gray-200 transition-all"
-                        >
-                          NO, GO BACK
-                        </button>
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-center space-y-8 py-4">
+                    <div className="w-16 h-16 bg-orange-50 text-orange-500 rounded-3xl flex items-center justify-center mx-auto border border-orange-100 rotate-12">
+                      <AlertTriangle size={32} />
+                    </div>
+                    <div className="space-y-3">
+                      <h3 className="font-black text-orbe-green text-xl uppercase tracking-tight">Final Confirmation</h3>
+                      <p className="text-sm text-gray-500 leading-relaxed">
+                        You are postponing this action until <span className="font-black text-amber-600 underline decoration-2 underline-offset-4">{formatDateSafe(postponeDate)}</span>.
+                      </p>
+                      <div className="p-4 bg-gray-50 rounded-2xl border border-orbe-tan/10 text-left">
+                        <p className="text-[8px] font-bold text-gray-400 uppercase mb-1">Reason provided:</p>
+                        <p className="text-xs text-gray-600 italic">"{postponeReason}"</p>
                       </div>
                     </div>
-                  )}
-                </form>
-              </motion.div>
-            </motion.div>
+                  </div>
+                )}
+              </form>
+            </OrbeModal>
           )}
         </AnimatePresence>
 
         {/* MODAL ADVERTENCIA DUPLICADOS */}
         <AnimatePresence>
           {showDuplicateModal && duplicateMatch && (
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-orbe-green/60 backdrop-blur-md"
+            <OrbeModal
+              isOpen={showDuplicateModal}
+              onClose={() => {
+                setShowDuplicateModal(false);
+                setDuplicateMatch(null);
+                setPendingPayload(null);
+              }}
+              title="Duplicate Warning"
+              subtitle="POSSIBLE EXISTING CLIENT MATCH"
+              icon={<AlertTriangle size={20} />}
+              variant="amber"
+              modalKey="duplicate-warning-modal"
+              footer={
+                <div className="flex flex-col gap-3">
+                  <button 
+                    onClick={() => executeSaveClient(pendingPayload)}
+                    className="w-full py-4 bg-orbe-green text-white rounded-2xl font-black text-[11px] uppercase tracking-[0.2em] hover:bg-orbe-green/90 transition-all shadow-lg shadow-orbe-green/20 active:scale-95"
+                  >
+                    Confirm as New Account
+                  </button>
+                  <button 
+                    onClick={() => {
+                      setShowDuplicateModal(false);
+                      setDuplicateMatch(null);
+                      setPendingPayload(null);
+                    }}
+                    className="w-full py-4 bg-gray-50 text-gray-500 rounded-2xl font-black text-[11px] uppercase tracking-[0.1em] hover:bg-gray-100 transition-all active:scale-95 border border-orbe-tan/30"
+                  >
+                    Cancel & Review
+                  </button>
+                </div>
+              }
             >
-              <motion.div 
-                initial={{ scale: 0.9, y: 20 }}
-                animate={{ scale: 1, y: 0 }}
-                exit={{ scale: 0.9, y: 20 }}
-                className="bg-white w-full max-w-md rounded-3xl shadow-2xl overflow-hidden border-4 border-amber-400"
-              >
-                <div className="bg-amber-400 p-8 text-center">
-                  <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-4 border-2 border-white/40">
-                    <AlertTriangle className="text-white w-8 h-8" />
-                  </div>
-                  <h2 className="text-2xl font-black text-amber-900 uppercase tracking-tighter leading-none mb-2">¡Atención!</h2>
-                  <p className="text-amber-900/70 text-[10px] font-bold uppercase tracking-widest">Posible registro duplicado</p>
-                </div>
-                
-                <div className="p-8">
-                  <p className="text-gray-600 text-sm leading-relaxed mb-6">
-                    Ya existe un cliente con un nombre muy similar: <br/>
-                    <span className="font-black text-orbe-green text-lg uppercase tracking-tight block mt-2">
-                      {duplicateMatch.company_name}
-                    </span>
+              <div className="space-y-6">
+                <div className="bg-amber-50 p-6 rounded-2xl border border-amber-100/50 text-center">
+                  <p className="text-amber-800 text-sm font-medium italic">We found a very similar entry:</p>
+                  <p className="text-amber-900 font-black text-xl mt-1 uppercase tracking-tight leading-tight">
+                    {duplicateMatch.company_name}
                   </p>
-                  
-                  <p className="text-xs text-gray-400 font-bold mb-8 italic">
-                    ¿Estás seguro de que se trata de un cliente distinto o es un duplicado?
-                  </p>
-                  
-                  <div className="space-y-3">
-                    <button 
-                      onClick={() => {
-                        executeSaveClient(pendingPayload);
-                      }}
-                      className="w-full py-4 bg-orbe-green text-white rounded-xl font-black text-[11px] uppercase tracking-[0.2em] hover:bg-orbe-green/90 transition-all shadow-lg active:scale-95"
-                    >
-                      Es un cliente distinto (Confirmar)
-                    </button>
-                    <button 
-                      onClick={() => {
-                        setShowDuplicateModal(false);
-                        setDuplicateMatch(null);
-                        setPendingPayload(null);
-                      }}
-                      className="w-full py-4 bg-gray-100 text-gray-400 rounded-xl font-black text-[11px] uppercase tracking-[0.2em] hover:bg-gray-200 transition-all active:scale-95 border border-gray-200"
-                    >
-                      Es un duplicado (Cancelar)
-                    </button>
+                  <div className="mt-2 text-[9px] font-bold text-amber-700/60 uppercase tracking-widest bg-white/50 py-1 px-3 rounded-full w-fit mx-auto border border-amber-200">
+                    ID: {duplicateMatch.id.slice(0, 8)}
                   </div>
                 </div>
-              </motion.div>
-            </motion.div>
+
+                <div className="space-y-4">
+                  <p className="text-gray-500 text-xs leading-relaxed text-center px-4">
+                    Creating duplicate entries can lead to data fragmentation and reporting errors. Are you sure <span className="font-bold text-orbe-green">"{pendingPayload?.company_name}"</span> is a different entity?
+                  </p>
+                  
+                  <div className="bg-orbe-cream/30 p-4 rounded-xl border border-orbe-tan/10 space-y-2">
+                    <p className="text-[9px] font-black text-orbe-green uppercase tracking-widest text-center">Security Checklist</p>
+                    <ul className="text-[10px] text-gray-500 space-y-1">
+                      <li className="flex items-center gap-2">
+                        <div className="w-1 h-1 bg-amber-400 rounded-full" />
+                        Verify Tax ID / CIF matches
+                      </li>
+                      <li className="flex items-center gap-2">
+                        <div className="w-1 h-1 bg-amber-400 rounded-full" />
+                        Check if it belongs to a different subsidiary
+                      </li>
+                      <li className="flex items-center gap-2">
+                        <div className="w-1 h-1 bg-amber-400 rounded-full" />
+                        Confirm it's not a variation of the same name
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </OrbeModal>
           )}
         </AnimatePresence>
 
         <AnimatePresence>
           {editingItem && (
-            <motion.div 
-              key="edit-pipeline-modal-overlay"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-orbe-green/40 backdrop-blur-sm"
-            >
-              <motion.div 
-                key="edit-pipeline-modal-content"
-                initial={{ scale: 0.95, y: 20 }}
-                animate={{ scale: 1, y: 0 }}
-                exit={{ scale: 0.95, y: 20 }}
-                className="bg-white w-full max-w-lg rounded-t-3xl md:rounded-3xl shadow-2xl overflow-hidden border border-orbe-tan/30 h-[90vh] md:h-auto flex flex-col mt-auto md:mt-0"
-              >
-                <div className="bg-blue-600 p-6 text-white text-center relative">
-                  <Edit2 className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                  <h2 className="text-xl font-bold">Edit Pipeline Entry</h2>
-                  <p className="text-white/60 text-xs uppercase tracking-widest font-black leading-none mt-1">{editingItem.company_name}</p>
+            <OrbeModal
+              isOpen={!!editingItem}
+              onClose={() => setEditingItem(null)}
+              title="Edit Activity"
+              subtitle={editingItem.company_name}
+              icon={<Edit2 size={20} />}
+              variant="blue"
+              modalKey="edit-pipeline-modal"
+              footer={
+                <div className="flex flex-col md:flex-row gap-3">
                   <button 
+                    type="button"
                     onClick={() => setEditingItem(null)}
-                    className="absolute top-4 right-4 p-2 hover:bg-white/10 rounded-full transition-all"
+                    className="flex-1 py-4 bg-white text-gray-400 rounded-2xl font-black text-[11px] uppercase tracking-[0.1em] hover:bg-gray-50 transition-all border border-orbe-tan/30"
                   >
-                    <PlusCircle size={20} style={{ transform: 'rotate(45deg)' }} />
+                    Cancel
+                  </button>
+                  <button 
+                    form="edit-pipeline-form"
+                    type="submit"
+                    className="flex-[2] py-4 bg-blue-600 text-white rounded-2xl font-black text-[11px] uppercase tracking-[0.2em] hover:bg-blue-700 transition-all shadow-xl shadow-blue-600/20 active:scale-95 flex items-center justify-center gap-2"
+                  >
+                    <Save size={16} />
+                    Save Updates
                   </button>
                 </div>
-                
-                <form 
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    const formData = new FormData(e.currentTarget);
-                    handleEditTask(
-                      editingItem.id,
-                      editingItem.client_id,
-                      {
-                        last_activity: formData.get('last_activity') as string,
-                        status: formData.get('status') as PipelineStatus,
-                        notes: formData.get('notes') as string
-                      }
-                    );
-                  }}
-                  className="p-8 space-y-6 overflow-y-auto flex-1 pb-32"
-                >
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="bg-gray-50 p-3 rounded-xl border border-gray-100">
-                      <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mb-1">Current Owner</p>
-                      <div className="flex items-center gap-2">
-                        <UserCircle size={14} className="text-orbe-green/50" />
-                        <span className="text-sm font-black text-orbe-green uppercase">{editingItem.owner_id}</span>
-                      </div>
-                      <p className="text-[8px] text-gray-300 italic mt-1 leading-none">ReadOnly Field</p>
-                    </div>
-                    <div className="bg-gray-50 p-3 rounded-xl border border-gray-200">
-                      <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mb-1">Due Date</p>
-                      <div className="flex items-center gap-2">
-                        <Calendar size={14} className="text-orbe-green/50" />
-                        <span className="text-sm font-black text-orbe-green uppercase font-mono">{formatDateSafe(editingItem.next_action_date)}</span>
-                      </div>
-                      <p className="text-[8px] text-gray-300 italic mt-1 leading-none">Use Postpone flow to change</p>
+              }
+            >
+              <form 
+                id="edit-pipeline-form"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const formData = new FormData(e.currentTarget);
+                  handleEditTask(
+                    editingItem.id,
+                    editingItem.client_id,
+                    {
+                      last_activity: formData.get('last_activity') as string,
+                      status: formData.get('status') as PipelineStatus,
+                      notes: formData.get('notes') as string
+                    }
+                  );
+                }}
+                className="space-y-6"
+              >
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="bg-gray-50 p-4 rounded-2xl border border-orbe-tan/10">
+                    <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Current Owner</p>
+                    <div className="flex items-center gap-2">
+                      <UserCircle size={16} className="text-orbe-green/40" />
+                      <span className="text-sm font-black text-orbe-green uppercase">{editingItem.owner_id || 'System'}</span>
                     </div>
                   </div>
+                  <div className="bg-gray-50 p-4 rounded-2xl border border-orbe-tan/10">
+                    <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1">Next Deadline</p>
+                    <div className="flex items-center gap-2">
+                      <Calendar size={16} className="text-orbe-green/40" />
+                      <span className="text-sm font-black text-orbe-green uppercase font-mono">{formatDateSafe(editingItem.next_action_date)}</span>
+                    </div>
+                  </div>
+                </div>
 
+                <div className="space-y-4">
                   <div>
-                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Client Status / Stage</label>
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest px-1">Pipeline Stage</label>
                     <select 
                       name="status"
                       defaultValue={editingItem.status}
@@ -5104,7 +5636,7 @@ export default function App() {
                   </div>
 
                   <div>
-                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Last Action Performed</label>
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest px-1">Engagement Type</label>
                     <select 
                       name="last_activity"
                       defaultValue={editingItem.last_activity}
@@ -5117,125 +5649,111 @@ export default function App() {
                   </div>
 
                   <div>
-                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Detail / Comments</label>
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest px-1">Internal Remarks</label>
                     <textarea 
                       name="notes"
                       defaultValue={editingItem.notes}
-                      className="w-full p-4 bg-gray-50 border border-orbe-tan/30 rounded-xl focus:ring-4 ring-blue-500/10 outline-none transition-all text-sm min-h-[100px] resize-none"
-                      placeholder="Add details about the last interaction..."
+                      rows={4}
+                      className="w-full p-4 bg-gray-50 border border-orbe-tan/30 rounded-xl focus:ring-4 ring-blue-500/10 outline-none transition-all text-sm min-h-[120px] resize-none"
+                      placeholder="Enter internal details about this state..."
                     />
                   </div>
-
-                  <div className="pt-2">
-                    <button 
-                      type="submit"
-                      className="w-full py-4 bg-blue-600 text-white rounded-2xl font-black text-[11px] uppercase tracking-[0.2em] hover:bg-blue-700 transition-all shadow-xl shadow-blue-600/20 active:scale-95 flex items-center justify-center gap-2"
-                    >
-                      <Save size={16} />
-                      Save Changes
-                    </button>
-                  </div>
-                </form>
-              </motion.div>
-            </motion.div>
+                </div>
+              </form>
+            </OrbeModal>
           )}
         </AnimatePresence>
+
 
         {/* MODAL HISTORIAL */}
         <AnimatePresence>
           {selectedClientForHistory && (
-            <motion.div 
-              key="history-modal-overlay"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-orbe-green/40 backdrop-blur-sm"
+            <OrbeModal
+              isOpen={!!selectedClientForHistory}
+              onClose={() => setSelectedClientForHistory(null)}
+              title="Interaction Log"
+              subtitle={selectedClientForHistory.company_name}
+              icon={<History size={20} />}
+              modalKey="history-modal"
+              size="lg"
             >
-              <motion.div 
-                key="history-modal-content"
-                initial={{ scale: 0.9, y: 20 }}
-                animate={{ scale: 1, y: 0 }}
-                exit={{ scale: 0.9, y: 20 }}
-                className="bg-white w-full max-w-2xl max-h-[90vh] rounded-t-3xl md:rounded-3xl shadow-2xl overflow-hidden flex flex-col border border-orbe-tan/30 mt-auto md:mt-0"
-              >
-                <div className="bg-orbe-green p-6 text-white flex justify-between items-center">
-                  <div>
-                    <h2 className="text-xl font-bold">{selectedClientForHistory.company_name}</h2>
-                    <p className="text-white/60 text-xs uppercase tracking-widest font-bold">Interaction Log</p>
+              <div className="space-y-8">
+                {/* Añadir Nota */}
+                <div className="bg-orbe-cream/30 p-5 rounded-2xl border border-orbe-tan/20">
+                  <label className="block text-[10px] font-bold text-orbe-green/60 uppercase mb-3 tracking-widest px-1">Record a Quick Note</label>
+                  <div className="flex flex-col md:flex-row gap-3">
+                    <textarea 
+                      value={newNote}
+                      onChange={(e) => setNewNote(e.target.value)}
+                      className="flex-1 p-4 bg-white border border-orbe-tan/30 rounded-xl text-sm outline-none focus:ring-4 ring-orbe-green/5 transition-all min-h-[80px] resize-none"
+                      placeholder="Write relevant interaction details here..."
+                    />
+                    <button 
+                      onClick={() => {
+                        if (newNote.trim()) {
+                          addHistoryEntry(selectedClientForHistory.client_id, 'note', newNote);
+                          setNewNote('');
+                        }
+                      }}
+                      className="bg-orbe-green text-white px-8 md:w-32 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-orbe-green/90 shadow-lg shadow-orbe-green/20 transition-all active:scale-95 py-4 md:py-0"
+                    >
+                      Log Note
+                    </button>
                   </div>
-                  <button 
-                    onClick={() => setSelectedClientForHistory(null)}
-                    className="p-2 hover:bg-white/10 rounded-full transition-all text-white/60 hover:text-white"
-                  >
-                    <PlusCircle size={24} style={{ transform: 'rotate(45deg)' }} />
-                  </button>
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-6 pb-32">
-                  {/* Añadir Nota */}
-                  <div className="bg-gray-50 p-4 rounded-xl border border-orbe-tan/30">
-                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-widest">Add Note / Follow-up</label>
-                    <div className="flex gap-2">
-                      <textarea 
-                        value={newNote}
-                        onChange={(e) => setNewNote(e.target.value)}
-                        className="flex-1 p-3 bg-white border border-orbe-tan/50 rounded-lg text-sm outline-none focus:ring-2 ring-orbe-green/10 transition-all min-h-[80px]"
-                        placeholder="Write interaction details here..."
-                      />
-                      <button 
-                        onClick={() => {
-                          if (newNote.trim()) {
-                            addHistoryEntry(selectedClientForHistory.client_id, 'note', newNote);
-                            setNewNote('');
-                          }
-                        }}
-                        className="bg-orbe-green text-white px-4 rounded-lg font-bold text-xs hover:opacity-90 transition-all flex flex-col items-center justify-center gap-1"
-                      >
-                        <PlusCircle size={16} />
-                        SAVE
-                      </button>
-                    </div>
+                <div className="space-y-6">
+                  <div className="flex items-center gap-3 px-1">
+                    <Activity size={14} className="text-orbe-green/40" />
+                    <h4 className="text-[10px] font-black text-orbe-green uppercase tracking-[0.2em]">Timeline Activity</h4>
                   </div>
 
-                    <div className="space-y-4">
+                  <div className="space-y-4">
                     {loadingHistory ? (
-                      <div key="loading-history" className="py-10 text-center text-gray-400 italic font-medium">Cargando bitácora...</div>
+                      <div key="loading-history" className="py-12 flex flex-col items-center justify-center gap-4 text-orbe-green/40 text-center italic">
+                        <Loader2 className="animate-spin" size={24} />
+                        <span className="text-[10px] font-bold uppercase tracking-widest">Synchronizing records...</span>
+                      </div>
                     ) : (!clientHistory || clientHistory.length === 0) ? (
-                      <div key="no-history" className="py-12 text-center text-gray-400 font-bold bg-gray-50/50 rounded-2xl border-2 border-dashed border-gray-100 uppercase tracking-widest text-[10px]">
-                        No hay registros para este cliente.
+                      <div key="no-history" className="py-16 text-center text-gray-400 font-bold bg-gray-50/50 rounded-3xl border-2 border-dashed border-gray-100 uppercase tracking-widest text-[10px] px-8">
+                        No historical records found for this account.
                       </div>
                     ) : (
                       clientHistory.map((log, index) => (
-                        <div key={safeKey('history-item', log.id, index)} className="relative pl-6 border-l border-orbe-tan/20 last:border-l-0 pb-6 group">
-                          <div className={`absolute -left-[5px] top-1 w-2.5 h-2.5 rounded-full border border-white shadow-sm transition-transform group-hover:scale-125 ${
-                            log.type === 'status_change' ? 'bg-orange-400' : 
+                        <div key={safeKey('history-item', log.id, index)} className="relative pl-8 border-l border-orbe-tan/20 last:border-l-0 pb-8 group">
+                          <div className={`absolute -left-[6px] top-1.5 w-3 h-3 rounded-full border-2 border-white shadow-md transition-all group-hover:scale-125 ${
+                            log.type === 'status_change' ? 'bg-amber-400' : 
                             log.type === 'priority_change' ? 'bg-red-500' : 
                             'bg-orbe-green'
                           }`}></div>
                           
-                          <div className="flex flex-col gap-1">
-                            <div className="flex justify-between items-center">
-                              <span className="text-[10px] font-black text-orbe-green uppercase tracking-widest opacity-40">
+                          <div className="space-y-2">
+                            <div className="flex justify-between items-center bg-gray-50/40 p-2 rounded-lg">
+                              <span className="text-[10px] font-black text-orbe-green/50 uppercase tracking-widest">
                                 {formatDateTimeSafe(log.next_action_date || log.created_at)}
                               </span>
-                              <div className="flex items-center gap-1.5 grayscale opacity-50">
-                                <UserCircle size={10} />
-                                <span className="text-[9px] font-bold uppercase truncate max-w-[80px]">
-                                  {(log.created_by?.split('@') || [])[0] || 'User'}
+                              <div className="flex items-center gap-2 px-2 py-0.5 bg-white border border-orbe-tan/20 rounded-full">
+                                <UserCircle size={10} className="text-orbe-green/30" />
+                                <span className="text-[8px] font-black text-orbe-green/60 uppercase tracking-tighter truncate max-w-[100px]">
+                                  {(log.created_by?.split('@') || [])[0] || 'ORBE SYSTEM'}
                                 </span>
                               </div>
                             </div>
 
-                            <div className="bg-white rounded-xl p-3 border border-orbe-tan/10 shadow-sm group-hover:border-orbe-tan/30 transition-all">
-                              {/* Mapeo de Campos: last_activity */}
-                              <p className="text-[11px] font-black text-orbe-green uppercase tracking-tight leading-tight">
-                                {log.last_activity || 'Sin actividad registrada'}
-                              </p>
-                              
-                              {/* Mapeo de Campos: notes */}
-                              <div className="mt-2 text-[11px] text-gray-600 leading-relaxed font-medium bg-gray-50/50 p-2 rounded-lg border border-gray-100/50">
-                                {log.notes && log.notes.trim() !== '' ? log.notes : 'Sin observaciones'}
+                            <div className="bg-white rounded-2xl p-4 border border-orbe-tan/10 shadow-sm group-hover:border-orbe-tan/30 group-hover:shadow-md transition-all">
+                              <div className="text-[11px] font-black text-orbe-green uppercase tracking-tight leading-tight flex items-center gap-2">
+                                <div className={`w-1.5 h-1.5 rounded-full ${
+                                  log.type === 'status_change' ? 'bg-amber-400' : 'bg-orbe-green'
+                                }`} />
+                                {log.last_activity || 'Activity Logged'}
                               </div>
+                              
+                              {log.notes && log.notes.trim() !== '' && (
+                                <div className="mt-3 text-[12px] text-gray-700 leading-relaxed font-normal bg-orbe-cream/5 p-4 rounded-xl border border-orbe-tan/5 italic relative">
+                                  <span className="absolute -top-2 left-3 bg-white px-1 text-[8px] font-bold text-gray-300">DETAILS</span>
+                                  {log.notes}
+                                </div>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -5243,10 +5761,11 @@ export default function App() {
                     )}
                   </div>
                 </div>
-              </motion.div>
-            </motion.div>
+              </div>
+            </OrbeModal>
           )}
         </AnimatePresence>
+
       </section>
     </main>
 
@@ -5265,45 +5784,394 @@ export default function App() {
         </div>
       </footer>
 
+      {/* ACCOUNT 360 DRAWER */}
+      <AnimatePresence>
+        {selectedAccount360 && (() => {
+          const clientPipeline = pipeline.filter(p => String(p.client_id) === String(selectedAccount360.client_id));
+          const mainRecord = getMainPipelineRecord(clientPipeline);
+          const currentStage = getEffectivePipelineStage(mainRecord);
+          const samplesStatus = normalizeSamplesStatus(mainRecord?.samples_sent);
+          
+          return (
+            <OrbeModal
+              isOpen={!!selectedAccount360}
+              onClose={() => setSelectedAccount360(null)}
+              title={selectedAccount360.company_name}
+              icon={<LayoutDashboard size={20} />}
+              modalKey="account-360-modal"
+              size="xl"
+              mobileMode="fullscreen"
+              footer={
+                <div className="flex flex-wrap gap-3">
+                   <button 
+                     onClick={() => setEditingClient(selectedAccount360)}
+                     className="flex-1 min-w-[120px] py-3 bg-white border border-orbe-tan/30 rounded-xl text-[10px] font-black text-orbe-green uppercase tracking-widest hover:bg-gray-50 transition-all flex items-center justify-center gap-2"
+                   >
+                     <Edit2 size={14} /> Edit Identity
+                   </button>
+                   {mainRecord && (
+                     <button 
+                       onClick={() => setEditingItem(mainRecord)}
+                       className="flex-1 min-w-[120px] py-3 bg-white border border-orbe-tan/30 rounded-xl text-[10px] font-black text-blue-600 uppercase tracking-widest hover:bg-blue-50/50 transition-all flex items-center justify-center gap-2"
+                     >
+                       <Briefcase size={14} /> Edit Pipeline
+                     </button>
+                   )}
+                   {mainRecord && !isDone(mainRecord.action_status) && (
+                     <>
+                       <button 
+                         onClick={() => setPostponeItem(mainRecord)}
+                         className="flex-1 min-w-[120px] py-3 bg-amber-50 text-amber-600 border border-amber-200 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-amber-100 transition-all flex items-center justify-center gap-2"
+                       >
+                         <Clock size={14} /> Postpone
+                       </button>
+                       <button 
+                         onClick={() => setTaskToAccomplish(mainRecord)}
+                         className="flex-[2] min-w-[160px] py-3 bg-orbe-green text-white rounded-xl text-[10px] font-black uppercase tracking-[0.2em] hover:bg-orbe-green/90 shadow-lg shadow-orbe-green/20 transition-all flex items-center justify-center gap-2"
+                       >
+                         <CheckCircle2 size={14} /> Complete Action
+                       </button>
+                     </>
+                   )}
+                </div>
+              }
+            >
+              <div className="space-y-8">
+                {/* SECTION 1: HEADER SUMMARY */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="bg-gray-50/50 p-4 rounded-2xl border border-orbe-tan/10">
+                    <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest mb-1">Account Type</p>
+                    <span className={`text-[10px] font-black px-2 py-0.5 rounded-lg border uppercase ${
+                      selectedAccount360.client_type === 'Client' ? 'bg-green-50 text-green-600 border-green-100' : 
+                      selectedAccount360.client_type === 'Temporary Discarded' ? 'bg-gray-100 text-gray-500 border-gray-200' :
+                      'bg-blue-50 text-blue-600 border-blue-100'
+                    }`}>
+                      {selectedAccount360.client_type || 'Potential'}
+                    </span>
+                  </div>
+                  <div className="bg-gray-50/50 p-4 rounded-2xl border border-orbe-tan/10">
+                    <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest mb-1">Owner</p>
+                    <div className="flex items-center gap-2">
+                      <UserCircle size={14} className="text-orbe-green/40" />
+                      <span className="text-[10px] font-black text-orbe-green uppercase">{mainRecord?.owner_id || 'Unassigned'}</span>
+                    </div>
+                  </div>
+                  <div className="bg-gray-50/50 p-4 rounded-2xl border border-orbe-tan/10">
+                    <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest mb-1">Pipeline Stage</p>
+                    <div className="flex items-center gap-2">
+                      <Layers size={14} className="text-orbe-green/40" />
+                      <span className="text-[10px] font-black text-orbe-green uppercase truncate">{currentStage}</span>
+                    </div>
+                  </div>
+                  <div className="bg-gray-50/50 p-4 rounded-2xl border border-orbe-tan/10">
+                    <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest mb-1">Priority</p>
+                    <div className={`text-[10px] font-black px-2 py-0.5 rounded-lg border uppercase w-fit ${
+                      mainRecord?.priority === 'High' ? 'bg-red-50 text-red-600 border-red-100' :
+                      mainRecord?.priority === 'Medium' ? 'bg-amber-50 text-amber-600 border-amber-100' :
+                      'bg-gray-50 text-gray-500 border-gray-200'
+                    }`}>
+                      {mainRecord?.priority || 'Low'}
+                    </div>
+                  </div>
+                </div>
+ 
+                {/* SECTION 2: PRODUCT INTERESTS */}
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between border-b border-orbe-tan/20 pb-2">
+                    <div className="flex items-center gap-2 px-1">
+                      <Zap size={14} className="text-amber-500" />
+                      <h4 className="text-[10px] font-black text-orbe-green uppercase tracking-[0.2em]">Product Interest Profile</h4>
+                    </div>
+                    <button 
+                      onClick={() => handleUpdateAccountTags(selectedAccount360.client_id, account360Tags)}
+                      disabled={isSaving}
+                      className="text-[8px] font-black text-orbe-green uppercase tracking-widest hover:underline disabled:opacity-50"
+                    >
+                      {isSaving ? 'Saving...' : 'Sync Profile'}
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {PRODUCT_INTEREST_TAGS.map(tag => {
+                      const isSelected = account360Tags.includes(tag);
+                      return (
+                        <button
+                          key={tag}
+                          onClick={() => {
+                            if (isSelected) {
+                              setAccount360Tags(account360Tags.filter(t => t !== tag));
+                            } else {
+                              setAccount360Tags([...account360Tags, tag]);
+                            }
+                          }}
+                          className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-tight transition-all border ${
+                            isSelected 
+                              ? 'bg-orbe-green text-white border-orbe-green shadow-sm scale-105' 
+                              : 'bg-white text-orbe-green/40 border-orbe-tan/20 hover:border-orbe-green/30 hover:text-orbe-green'
+                          }`}
+                        >
+                          {getProductTagLabel(tag)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+ 
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                  {/* SECTION 3: PIPELINE SNAPSHOT */}
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-2 px-1 border-b border-orbe-tan/20 pb-2">
+                      <Target size={14} className="text-orbe-green" />
+                      <h4 className="text-[10px] font-black text-orbe-green uppercase tracking-[0.2em]">Pipeline Snapshot</h4>
+                    </div>
+                    {mainRecord ? (
+                      <div className="bg-white rounded-2xl border border-orbe-tan/20 p-5 space-y-5 shadow-sm">
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <p className="text-[8px] font-black text-gray-400 uppercase mb-1 tracking-widest">Last Activity</p>
+                            <p className="text-xs font-bold text-orbe-green">{mainRecord.last_activity || 'No activity recorded'}</p>
+                            <p className="text-[9px] text-gray-400 mt-0.5">{formatDateSafe(mainRecord.last_contact_date)}</p>
+                          </div>
+                          <div>
+                            <p className="text-[8px] font-black text-gray-400 uppercase mb-1 tracking-widest">Next Deadline</p>
+                            <p className={`text-xs font-black ${isOverdue(mainRecord.next_action_date, mainRecord.action_status) ? 'text-red-500' : 'text-orbe-green'}`}>
+                              {formatDateSafe(mainRecord.next_action_date) || 'Not scheduled'}
+                            </p>
+                            <div className="flex gap-1 mt-1">
+                              {isOverdue(mainRecord.next_action_date, mainRecord.action_status) && (
+                                <span className="text-[7px] font-black bg-red-50 text-red-600 px-1 rounded uppercase">Overdue</span>
+                              )}
+                              {isDueToday(mainRecord.next_action_date, mainRecord.action_status) && (
+                                <span className="text-[7px] font-black bg-amber-50 text-amber-600 px-1 rounded uppercase">Due Today</span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+ 
+                        <div className="pt-4 border-t border-orbe-tan/10">
+                           <p className="text-[8px] font-black text-gray-400 uppercase mb-2 tracking-widest">Strategy Notes</p>
+                           <p className="text-[11px] text-gray-600 leading-relaxed italic bg-gray-50/50 p-3 rounded-xl border border-gray-100">
+                             "{mainRecord.notes || 'No strategy notes available for this stage'}"
+                           </p>
+                        </div>
+ 
+                        <div className="pt-4 border-t border-orbe-tan/10 flex justify-between items-center">
+                          <div className="flex items-center gap-2">
+                            <div className={`w-2 h-2 rounded-full ${isDone(mainRecord.action_status) ? 'bg-green-500' : 'bg-blue-500'}`} />
+                            <span className="text-[9px] font-black text-gray-600 uppercase tracking-widest">{mainRecord.action_status}</span>
+                          </div>
+                          <span className="text-[8px] font-bold text-gray-300 uppercase">Registered {formatDateSafe(mainRecord.created_at)}</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="bg-gray-50/50 rounded-2xl border-2 border-dashed border-gray-100 p-8 text-center">
+                        <Target size={24} className="text-gray-200 mx-auto mb-2" />
+                        <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">No active pipeline records</p>
+                      </div>
+                    )}
+                  </div>
+ 
+                  {/* SECTION 4: CONTACT & SAMPLES */}
+                  <div className="space-y-8">
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-2 px-1 border-b border-orbe-tan/20 pb-2">
+                        <History size={14} className="text-orbe-green" />
+                        <h4 className="text-[10px] font-black text-orbe-green uppercase tracking-[0.2em]">Contact Channels</h4>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="bg-white p-4 rounded-2xl border border-orbe-tan/10 shadow-sm flex items-center gap-3">
+                          <div className="p-2 bg-orbe-green/5 rounded-lg text-orbe-green"><UserCircle size={16} /></div>
+                          <div className="overflow-hidden">
+                            <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest leading-none mb-1">Key Contact</p>
+                            <p className="text-[11px] font-bold text-orbe-green truncate">{selectedAccount360.contact_name || 'Not specified'}</p>
+                          </div>
+                        </div>
+                        <div className="bg-white p-4 rounded-2xl border border-orbe-tan/10 shadow-sm flex items-center gap-3">
+                          <div className="p-2 bg-orbe-green/5 rounded-lg text-orbe-green"><Mail size={16} /></div>
+                          <div className="overflow-hidden">
+                            <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest leading-none mb-1">Corporate Email</p>
+                            {selectedAccount360.email ? (
+                              <a href={`mailto:${selectedAccount360.email}`} className="text-[11px] font-bold text-orbe-green hover:underline truncate block">{selectedAccount360.email}</a>
+                            ) : (
+                              <p className="text-[11px] font-bold text-gray-300">N/A</p>
+                            )}
+                          </div>
+                        </div>
+                        <div className="bg-white p-4 rounded-2xl border border-orbe-tan/10 shadow-sm flex items-center gap-3">
+                          <div className="p-2 bg-orbe-green/5 rounded-lg text-orbe-green"><Phone size={16} /></div>
+                          <div className="overflow-hidden">
+                            <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest leading-none mb-1">Direct Phone</p>
+                            {selectedAccount360.phone ? (
+                              <a href={`tel:${selectedAccount360.phone}`} className="text-[11px] font-bold text-orbe-green hover:underline truncate block">{selectedAccount360.phone}</a>
+                            ) : (
+                                <p className="text-[11px] font-bold text-gray-300">N/A</p>
+                            )}
+                          </div>
+                        </div>
+                        <div className="bg-white p-4 rounded-2xl border border-orbe-tan/10 shadow-sm flex items-center gap-3">
+                          <div className="p-2 bg-orbe-green/5 rounded-lg text-orbe-green"><Globe size={16} /></div>
+                          <div className="overflow-hidden">
+                            <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest leading-none mb-1">Digital Presence</p>
+                            {selectedAccount360.website ? (
+                              <a href={selectedAccount360.website.startsWith('http') ? selectedAccount360.website : `https://${selectedAccount360.website}`} target="_blank" rel="noopener noreferrer" className="text-[11px] font-bold text-orbe-green hover:underline truncate block">{selectedAccount360.website}</a>
+                            ) : (
+                                <p className="text-[11px] font-bold text-gray-300">N/A</p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+ 
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-2 px-1 border-b border-orbe-tan/20 pb-2">
+                        <Zap size={14} className="text-orbe-green" />
+                        <h4 className="text-[10px] font-black text-orbe-green uppercase tracking-[0.2em]">Samples Logistics</h4>
+                      </div>
+                      <div className="bg-white p-5 rounded-3xl border border-orbe-tan/10 shadow-sm">
+                        <div className="flex items-center gap-4">
+                           <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${
+                             samplesStatus === 'sent' ? 'bg-green-50 text-green-600' : 'bg-gray-50 text-gray-300'
+                           }`}>
+                             <Briefcase size={24} />
+                           </div>
+                           <div>
+                             <p className="text-[9px] font-black text-gray-400 uppercase tracking-widest leading-none mb-1">Stock Status</p>
+                             <p className="text-sm font-black text-orbe-green uppercase">
+                               {samplesStatus === 'sent' ? 'Inventory Samples Sent' : 'No Samples Logged'}
+                             </p>
+                           </div>
+                        </div>
+                        <div className="mt-4 p-3 bg-gray-50/50 rounded-xl border border-gray-100">
+                           <p className="text-[9px] font-bold text-gray-500 italic">
+                             {samplesStatus === 'sent' 
+                               ? 'The client has received OrBe physical samples for evaluation. Ensure follow-up within 7 days of delivery.' 
+                               : 'No samples have been dispatched to this account yet. Consider sending an introduction selection.'}
+                           </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+ 
+                {/* SECTION 5: INTERACTION TIMELINE */}
+                <div className="space-y-6">
+                  <div className="flex items-center gap-2 px-1 border-b border-orbe-tan/20 pb-2">
+                    <Activity size={14} className="text-orbe-green" />
+                    <h4 className="text-[10px] font-black text-orbe-green uppercase tracking-[0.2em]">Interaction Timeline</h4>
+                  </div>
+                  <div className="space-y-4">
+                    {clientPipeline.length === 0 ? (
+                      <div className="py-12 bg-gray-50/50 rounded-3xl border-2 border-dashed border-gray-100 text-center">
+                        <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">No historical activities found</p>
+                      </div>
+                    ) : (
+                      [...clientPipeline].sort((a,b) => new Date(b.last_contact_date || b.created_at || 0).getTime() - new Date(a.last_contact_date || a.created_at || 0).getTime()).map((item, idx) => (
+                        <div key={getPipelineKey(item, 'account360-timeline', idx)} className="relative pl-8 border-l border-orbe-tan/20 last:border-l-0 pb-6">
+                           <div className={`absolute -left-[5px] top-1.5 w-2.5 h-2.5 rounded-full border border-white shadow-sm ${
+                             isDone(item.action_status) ? 'bg-green-500' : 
+                             isOverdue(item.next_action_date, item.action_status) ? 'bg-red-500' : 'bg-blue-500'
+                           }`} />
+                           <div className="bg-white rounded-2xl border border-orbe-tan/10 p-4 shadow-sm hover:shadow-md transition-shadow">
+                             <div className="flex justify-between items-center mb-2">
+                               <span className="text-[8px] font-black text-gray-400 uppercase tracking-widest">{formatDateSafe(item.last_contact_date || item.created_at)}</span>
+                               <div className="flex items-center gap-1.5">
+                                 <UserCircle size={10} className="text-orbe-green/40" />
+                                 <span className="text-[8px] font-bold text-orbe-green uppercase">{item.owner_id}</span>
+                               </div>
+                             </div>
+                             <p className="text-[11px] font-black text-orbe-green uppercase tracking-tight mb-1">{item.last_activity}</p>
+                             <div className="flex items-center gap-2 mb-2">
+                               <span className="text-[7px] font-black bg-orbe-tan/20 text-orbe-green px-1 rounded uppercase">{getEffectivePipelineStage(item)}</span>
+                               <span className={`text-[7px] font-black px-1 rounded uppercase ${
+                                 item.priority === 'High' ? 'bg-red-50 text-red-600' : 'bg-gray-100 text-gray-500'
+                               }`}>{item.priority}</span>
+                             </div>
+                             {item.notes && (
+                               <p className="text-[10px] text-gray-600 italic bg-gray-50/50 p-2 rounded-lg border border-gray-100">"{item.notes}"</p>
+                             )}
+                           </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+ 
+                {/* SECTION 6: NOTES */}
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2 px-1 border-b border-orbe-tan/20 pb-2">
+                    <MessageSquare size={14} className="text-orbe-green" />
+                    <h4 className="text-[10px] font-black text-orbe-green uppercase tracking-[0.2em]">Global Account Notes</h4>
+                  </div>
+                  <div className="bg-blue-50/20 p-5 rounded-3xl border border-blue-100/30">
+                    <p className="text-[12px] text-blue-900/80 leading-relaxed font-medium">
+                      {selectedAccount360.notes || 'No global notes available for this entity. Internal context should be added via identity editing.'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </OrbeModal>
+          );
+        })()}
+      </AnimatePresence>
+
       {/* CUSTOM DELETE CONFIRMATION MODAL */}
       <AnimatePresence>
         {showDeleteModal && (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[999] flex items-center justify-center p-4">
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white rounded-2xl shadow-2xl overflow-hidden w-full max-w-sm border-2 border-red-100"
-            >
-              <div className="bg-red-50 p-6 flex flex-col items-center text-center">
-                <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center text-red-600 mb-4">
-                  <Trash2 size={32} />
-                </div>
-                <h3 className="text-xl font-black text-orbe-green uppercase tracking-tighter">Are you sure?</h3>
-                <p className="text-gray-500 text-sm mt-2">
-                  This action is permanent and will delete all information for client <span className="font-bold text-red-600">#{showDeleteModal}</span> and their history.
-                </p>
-              </div>
-              <div className="p-4 flex gap-3 bg-gray-50 border-t border-orbe-tan/20">
-                <button
-                  onClick={() => setShowDeleteModal(null)}
-                  className="flex-1 py-3 px-4 bg-white border border-orbe-tan/30 rounded-xl text-[10px] font-black text-gray-500 uppercase tracking-widest hover:bg-gray-100 transition-all"
-                >
-                  Cancel
-                </button>
+          <OrbeModal
+            isOpen={!!showDeleteModal}
+            onClose={() => setShowDeleteModal(null)}
+            title="Delete Account"
+            subtitle={`RECORD ID: ${showDeleteModal}`}
+            icon={<Trash2 size={20} />}
+            variant="danger"
+            modalKey="delete-modal"
+            footer={
+              <div className="flex flex-col gap-3">
                 <button
                   onClick={async () => {
                     const id = showDeleteModal;
                     setShowDeleteModal(null);
                     await handleDeleteClient(id);
                   }}
-                  className="flex-1 py-3 px-4 bg-red-600 rounded-xl text-[10px] font-black text-white uppercase tracking-widest hover:bg-red-700 shadow-lg shadow-red-200 transition-all"
+                  className="w-full py-4 bg-red-600 rounded-2xl text-[11px] font-black text-white uppercase tracking-[0.2em] hover:bg-red-700 shadow-xl shadow-red-600/20 transition-all active:scale-95 flex items-center justify-center gap-2"
                 >
-                  Yes, Delete
+                  <Trash2 size={16} />
+                  Permanently Delete
+                </button>
+                <button
+                  onClick={() => setShowDeleteModal(null)}
+                  className="w-full py-4 bg-gray-50 border border-orbe-tan/30 rounded-2xl text-[11px] font-black text-gray-500 uppercase tracking-[0.1em] hover:bg-gray-100 transition-all active:scale-95"
+                >
+                  Keep Account (Cancel)
                 </button>
               </div>
-            </motion.div>
-          </div>
+            }
+          >
+            <div className="space-y-6">
+              <div className="bg-red-50 p-8 rounded-3xl border border-red-100 flex flex-col items-center text-center">
+                <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center text-red-600 shadow-sm mb-4 border border-red-100 rotate-12">
+                  <Trash2 size={40} />
+                </div>
+                <h3 className="text-2xl font-black text-orbe-green uppercase tracking-tighter leading-none mb-2">Are you positive?</h3>
+                <p className="text-[10px] text-red-600 font-bold uppercase tracking-widest">Crucial Action Warning</p>
+              </div>
+
+              <div className="space-y-4 px-2">
+                <p className="text-gray-500 text-sm leading-relaxed text-center">
+                  This transaction is permanent. Deleting this account will also remove all associated <span className="font-black text-red-600 italic">historical activity, pipeline entries, and relationship logs</span>.
+                </p>
+                
+                <div className="bg-red-50/30 p-4 rounded-xl border border-red-100/50">
+                  <div className="flex items-center gap-2 mb-2">
+                    <AlertTriangle size={14} className="text-red-500" />
+                    <p className="text-[9px] font-black text-red-800 uppercase tracking-widest">Protocol Notice</p>
+                  </div>
+                  <p className="text-[10px] text-red-700 font-medium italic">
+                    Data recovery will not be possible once confirmed. Ensure you have backup of any critical correspondence.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </OrbeModal>
         )}
       </AnimatePresence>
     </div>
